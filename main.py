@@ -248,7 +248,6 @@ except Exception:
 # ═══════════════════════════════════════════════════════════
 import urllib.request   # ★ إضافة (إصدار 10): جلب التحديث — المكتبة القياسية وحدها
 import threading        # ★ إضافة (إصدار 10): فحص خلفي لا يجمّد الواجهة أبداً
-import time             # ★ إضافة (إصدار 10): مُبطِل كاش روابط الفحص (بالدقيقة)
 
 VERSION = "2.0"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
 UPDATE_VERSION_URL = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/version.txt"
@@ -1695,16 +1694,6 @@ def _update_headers():
         h["Authorization"] = "Bearer " + GITHUB_TOKEN.strip()
     return h
 
-def _update_nocache(url):
-    """مُبطِل تخزين مؤقت لروابط الويب فقط: خدمة الروابط الخام تعلّق
-    المحتوى دقائق في شبكات التوزيع، فيرى «فحص التحديثات الآن» رقماً
-    قديماً رغم نشر الجديد — إلحاق متغير زمني (بالدقيقة) يجبر الجلب
-    الأحدث؛ روابط file:// المحلية تبقى كما هي"""
-    if url.startswith("http"):
-        sep = "&" if "?" in url else "?"
-        return url + sep + "t=" + str(int(time.time() // 60))
-    return url
-
 def update_fetch(url, timeout=5):
     """جلب محتوى رابط التحديث بمكتبة urllib.request القياسية وحدها —
     أي فشل (لا إنترنت / توكن ناقص / مستودع غير موجود) يرجع None بصمت تام"""
@@ -1759,7 +1748,7 @@ def update_check_silent(app):
     (البرنامج يعمل طبيعياً 100%)، والنتيجة تُسجل في سجل التدقيق فقط
     بصمت — وعند توفر إصدار جديد يظهر شريط الإشعار الأصفر وحده دون أي
     تفاصيل تقنية"""
-    box = update_fetch_async(_update_nocache(UPDATE_VERSION_URL), UPDATE_CHECK_TIMEOUT)
+    box = update_fetch_async(UPDATE_VERSION_URL, UPDATE_CHECK_TIMEOUT)
     def _poll():
         if box["state"] != "done":
             try:
@@ -5074,7 +5063,7 @@ class App(tk.Tk):
             lbl.config(text="جارٍ الفحص...", fg=GRAY)
         except Exception:
             pass
-        box = update_fetch_async(_update_nocache(UPDATE_VERSION_URL), UPDATE_CHECK_TIMEOUT)
+        box = update_fetch_async(UPDATE_VERSION_URL, UPDATE_CHECK_TIMEOUT)
         def _poll():
             if box["state"] != "done":
                 try:
@@ -5130,7 +5119,7 @@ class App(tk.Tk):
             lbl.config(text="جارٍ تنزيل التحديث...", fg=GRAY)
         except Exception:
             pass
-        box = update_fetch_async(_update_nocache(UPDATE_FILE_URL), UPDATE_DOWNLOAD_TIMEOUT)
+        box = update_fetch_async(UPDATE_FILE_URL, UPDATE_DOWNLOAD_TIMEOUT)
 
         def _fail(msg):
             """إلغاء آمن: حذف الملف المؤقت إن وُجد وإعادة الزر — لم يتغير شيء
