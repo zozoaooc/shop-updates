@@ -249,7 +249,7 @@ except Exception:
 import urllib.request   # ★ إضافة (إصدار 10): جلب التحديث — المكتبة القياسية وحدها
 import threading        # ★ إضافة (إصدار 10): فحص خلفي لا يجمّد الواجهة أبداً
 
-VERSION = "2.0"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
+VERSION = "2.1"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
 UPDATE_VERSION_URL = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/version.txt"
 UPDATE_FILE_URL    = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/main.py"
 GITHUB_TOKEN = "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"   # يملؤه المالك يدوياً عند تغييره
@@ -1722,15 +1722,27 @@ def update_fetch_async(url, timeout=5):
     return box
 
 def update_parse_version(raw):
-    """قراءة رقم الإصدار من محتوى version.txt — None عند أي خلل في المحتوى"""
+    """قراءة رقم الإصدار من محتوى version.txt — None عند أي خلل في المحتوى
+    ★ إصلاح (11 — البند أ): الرقم غير القابل للقراءة (أحرف، رموز، صفحة
+    خطأ HTML) = None دائماً — لا شريط ولا زر إطلاقاً إلا لرقم نظيف أرقام
+    ونقاط فقط، فالمقارنة أرقام حقيقية ولا معنى لمقارنة نص غير رقمي"""
     try:
         t = raw.decode("utf-8").strip()
     except Exception:
         return None
-    return t if t and len(t) <= 12 and "\n" not in t else None
+    if not t or len(t) > 12 or "\n" in t:
+        return None
+    parts = t.split(".")
+    return t if parts and all(p.isdigit() and len(p) <= 4 for p in parts) else None
 
 def update_is_newer(remote, local):
-    """مقارنة رقمي إصدار جزءاً جزءاً (2.1 أحدث من 2.0 و 2.0.2 أحدث من 2.0)"""
+    """مقارنة رقمي إصدار جزءاً جزءاً بأرقام حقيقية لا نصوص (2.10 أحدث من
+    2.9 و 10.0 أحدث من 9.9 و 2.0.2 أحدث من 2.0)
+    ★ إصلاح (11 — البند أ): صارمة تماماً — (1) تسوية الطول بالأصفار قبل
+    المقارنة كي تُعدّ 2.0.0 مساويةً لـ 2.0 لا أحدث منها (2) عند أي استثناء
+    أو خلل النتيجة False (ليست أحدث) — «مختلف عن المحلي» لم يعد يعني
+    «أحدث» أبداً، فالشريط والزر لا يظهران إلا إذا كان رقم المستودع أكبر
+    من VERSION المحلي فعلياً جزءاً جزءاً"""
     def _parts(v):
         out = []
         for p in str(v).strip().split("."):
@@ -1738,9 +1750,13 @@ def update_is_newer(remote, local):
             out.append(int(p) if p.isdigit() else 0)
         return out or [0]
     try:
-        return _parts(remote) > _parts(local)
+        rp, lp = _parts(remote), _parts(local)
+        n = max(len(rp), len(lp))       # تسوية الطول بالأصفار ثم مقارنة رقمية
+        rp += [0] * (n - len(rp))
+        lp += [0] * (n - len(lp))
+        return rp > lp                   # أحدث فقط إذا أكبر رقماً فعلياً
     except Exception:
-        return str(remote).strip() != str(local).strip()
+        return False                     # غير قابل للمقارنة = ليس أحدث
 
 def update_check_silent(app):
     """(1) الفحص التلقائي الصامت بعد الدخول مباشرة — لا يبطئ الفتح ولا
@@ -1806,6 +1822,12 @@ class App(tk.Tk):
         # تُفتح (تفاصيل اليوم، المعاينة، إدارة المستخدمين، تغيير كلمة المرور...)
         # — تُغلق كلها فوراً عند تبديل المستخدم
         self.open_windows = []
+        # ★ إصلاح (11 — البند ب): علم حالة التحديث مخفي افتراضياً عند بدء
+        # التشغيل — لا شريط ولا زر تحديث مهما كان المستودع إلا من داخل
+        # نتيجة مقارنة ناجحة تثبت وجود إصدار أحدث من VERSION فعلياً
+        self.update_available_version = None   # لا تحديث مؤكد عند الإقلاع
+        self.update_bar = None                 # لا شريط إشعار عند الإقلاع
+        self.update_bar_dismissed = False      # لم يُخفِ المدير شيئاً بعد
         # ★ إضافة (إصدار 8 — الميزة 5): مزامنة الجلسة — النافذة الرئيسية تمثل
         # المستخدم الحالي (نفس القيمة التي يضبطها تسجيل الدخول فلا سلوك جديد)
         CURRENT_USER["name"] = user_name
@@ -2046,16 +2068,18 @@ class App(tk.Tk):
         # فقط، بنفس نمط أزرار الشريط الجانبي، ويُضاف لقائمة أزرار المدير
         # وقائمة الصلاحيات (NAV_PERMS: "manager") كي يُخفى عن البائع ويُعاد
         # إظهاره تلقائياً عند تبديل المستخدم كإخوته في مجموعة الإدارة
+        # ★ إصلاح (11 — البند ب): الزر يُخفى صراحة (pack_forget) عند بدء
+        # التشغيل ولا يُحزم — لا يظهر إلا من داخل نتيجة مقارنة ناجحة تثبت
+        # وجود إصدار أحدث من VERSION المحلي فعلياً (يُديره refresh_update_bar
+        # وشرطه في refresh_sidebar_permissions — لا مصدر آخر لإظهاره)
         b_upd = tk.Button(sb, text="⬇️  التحديث", font=FB, bd=0, cursor="hand2",
                           anchor="e", bg=SIDEBAR, fg="#cbd5e1", activebackground=ACCENT,
                           activeforeground="white", padx=18, pady=11, highlightthickness=0,
                           command=self.update_now_dialog)
-        b_upd.pack(fill="x", padx=10, pady=3)
+        b_upd.pack_forget()          # مخفي افتراضياً للجميع حتى تثبت المقارنة
         self.nav_buttons["update"] = b_upd
         self.manager_btns.append(b_upd)
-        add_tip(b_upd, "فحص تحديثات البرنامج وتثبيتها — للمدير فقط")
-        if self.role != "مدير":
-            b_upd.pack_forget()
+        add_tip(b_upd, "فحص تحديثات البرنامج وتثبيتها — يظهر فقط عند توفر تحديث فعلي")
 
         self.mk_btn(sb, "⏻  خروج", self.exit_app, RED).pack(fill="x", padx=10, side="bottom", pady=(3, 20))
         # ★ إضافة (إصدار 4 — ميزة 1): زر «تبديل المستخدم» — لكل المستخدمين، فوق زر
@@ -2105,12 +2129,18 @@ class App(tk.Tk):
         self.group_headers = {}
         # كل زر يظهر حسب صلاحيته الفعلية ويُرتب داخل مجموعته (المدير: الكل)
         # (pack وحده لا ينقل زراً محزوماً مسبقاً — لا بد من فكه ثم إعادة حزمه)
+        # ★ إصلاح (11 — البند ب): زر «التحديث» استثناء صارم — لا تكفي صلاحية
+        # المدير وحدها لإظهاره؛ يظهر فقط إذا أثبت فحص ناجح وجود إصدار أحدث
+        # فعلياً (update_available_version) — وإلا يُخفى كأي زر بلا صلاحية
         for gtitle, keys in self.SIDEBAR_GROUPS:
             first_visible = None
             for key in keys:
                 b = self.nav_buttons[key]
                 perm = self.NAV_PERMS.get(key)
-                if perm is None or self.has_permission(perm):
+                ok = perm is None or self.has_permission(perm)
+                if key == "update":
+                    ok = ok and bool(getattr(self, "update_available_version", None))
+                if ok:
                     b.pack_forget()
                     b.pack(fill="x", padx=10, pady=3)
                     if first_visible is None:
@@ -4964,7 +4994,26 @@ class App(tk.Tk):
         """(2) شريط الإشعار الأصفر الرفيع أعلى الشريط الإحصائي — الوحيد الذي
         يراه المستخدمون من نظام التحديث: بلا أي كلمة تقنية إطلاقاً — البائع
         يرى «راجع المدير» فقط، والمدير يرى زر «⬇️ تحديث الآن» وزر ✕ لإخفاء
-        الشريط لهذه الجلسة فقط"""
+        الشريط لهذه الجلسة فقط
+        ★ إصلاح (11 — البندان ب+ج): (ب) زر «⬇️ التحديث» الجانبي يُدار من
+        هنا أيضاً — مخفي بلا تحديث مؤكد وظهره الوحيد نتيجة مقارنة ناجحة
+        (ج) نص الشريط يعرض رقم الإصدار الجديد: «🔔 يتوفر تحديث جديد —
+        الإصدار [رقم]»، فإن غاب الرقم اكتمل النص بدونه"""
+        # (ب) زر الشريط الجانبي أولاً: يظهر للمدير فقط عند تحديث مؤكد فعلياً —
+        # وإلا يُخفى صراحة (هذه هي النقطة الوحيدة التي تُظهره بعد الإقلاع)
+        b_side = self.nav_buttons.get("update")
+        if b_side is not None:
+            try:
+                if (getattr(self, "update_available_version", None)
+                        and self.role == "مدير" and self.has_permission("manager")):
+                    try:
+                        b_side.pack_info()      # محزوم أصلاً؟ لا تعد حزمه (يبقى موضعه)
+                    except Exception:
+                        b_side.pack(fill="x", padx=10, pady=3)
+                else:
+                    b_side.pack_forget()
+            except Exception:
+                pass
         if getattr(self, "update_bar", None) is not None:
             try:
                 self.update_bar.destroy()
@@ -4981,7 +5030,10 @@ class App(tk.Tk):
             bar.pack(fill="x", padx=25, pady=(10, 0), before=self.stats_bar_frame)
         except Exception:
             bar.pack(fill="x", padx=25, pady=(10, 0))
-        tk.Label(bar, text="🔔 يتوفر تحديث جديد للبرنامج", bg=upd_bg, fg=upd_fg,
+        # (ج) النص مع رقم الإصدار الجديد — وبدونه إن غاب
+        tk.Label(bar, text=(f"🔔 يتوفر تحديث جديد — الإصدار {ver}" if ver
+                            else "🔔 يتوفر تحديث جديد"),
+                 bg=upd_bg, fg=upd_fg,
                  font=("Segoe UI", 10, "bold")).pack(side="right", padx=(4, 12), pady=4)
         if self.role == "مدير":
             b_now = tk.Button(bar, text="⬇️ تحديث الآن", command=self.update_now_dialog,
@@ -5046,7 +5098,7 @@ class App(tk.Tk):
         b_close = self.mk_btn(fr_btns, "إغلاق", win.destroy, "#475569")
         b_close.pack(side="right", padx=6)
         b_recheck = self.mk_btn(win, "🔄 فحص التحديثات الآن",
-                                lambda: self.update_check_now(win, lbl), "#0369a1")
+                                lambda: self.update_check_now(win, lbl, b_install, b_close), "#0369a1")
         b_recheck.pack(pady=(10, 12))
         add_tip(b_recheck, "إعادة فحص التحديثات الآن بغض النظر عن الفحص التلقائي الصامت")
         # الحالة الابتدائية: إصدار معروف من الفحص الصامت، أو فحص فوري عند الفتح
@@ -5054,15 +5106,34 @@ class App(tk.Tk):
         if ver:
             lbl.config(text=f"يتوفر تحديث جديد (الإصدار {ver})", fg=ORANGE)
         else:
-            self.update_check_now(win, lbl)
+            # ★ إصلاح (11 — البند د): بلا إصدار مؤكد يبدأ الفحص فوراً وزر
+            # «تثبيت الآن» مخفي حتى تثبت نتيجة المقارنة وجود إصدار أحدث فعلياً
+            self.update_check_now(win, lbl, b_install, b_close)
 
-    def update_check_now(self, win, lbl):
+    def update_check_now(self, win, lbl, install_btn=None, anchor_btn=None):
         """(4) زر «🔄 فحص التحديثات الآن»: فحص فوري بنفس مهلة الفحص الصامت —
-        يحدّث حالة نافذة التحديث وشريط الإشعار الأصفر معاً وبهدوء عند الفشل"""
+        يحدّث حالة نافذة التحديث وشريط الإشعار الأصفر معاً وبهدوء عند الفشل
+        ★ إصلاح (11 — البند د): عند عدم وجود إصدار أحدث فعلياً تظهر رسالة
+        «✅ أنت على أحدث إصدار — الإصدار الحالي [VERSION]» ولا يظهر أي زر
+        تثبيت في هذه الحالة — فزر «تثبيت الآن» يُخفى فور بدء الفحص ولا
+        يُعاد إظهاره إلا من داخل نتيجة مقارنة ناجحة تثبت إصداراً أحدث"""
+        def _hide_install():
+            if install_btn is not None:
+                try:
+                    install_btn.pack_forget()
+                except Exception:
+                    pass
+        def _show_install():
+            if install_btn is not None:
+                try:
+                    install_btn.pack(side="right", padx=6, before=anchor_btn)
+                except Exception:
+                    install_btn.pack(side="right", padx=6)
         try:
             lbl.config(text="جارٍ الفحص...", fg=GRAY)
         except Exception:
             pass
+        _hide_install()      # مخفي أثناء الفحص وفي كل نتيجة ليست «إصداراً أحدث»
         box = update_fetch_async(UPDATE_VERSION_URL, UPDATE_CHECK_TIMEOUT)
         def _poll():
             if box["state"] != "done":
@@ -5077,11 +5148,15 @@ class App(tk.Tk):
                     lbl.config(text="تعذر فحص التحديثات الآن", fg=RED)
                     return
                 if not update_is_newer(remote, VERSION):
-                    lbl.config(text=f"أنت على أحدث إصدار ({VERSION})", fg=GREEN)
+                    self.update_available_version = None  # لا تحديث مؤكد الآن
+                    self.refresh_update_bar()             # إخفاء الشريط والزر إن بقيا من تأكيد سابق
+                    lbl.config(text=f"✅ أنت على أحدث إصدار — الإصدار الحالي {VERSION}",
+                               fg=GREEN)
                     return
                 self.update_available_version = remote
                 audit("فحص تحديث يدوي", f"يتوفر إصدار جديد: {remote}")
                 lbl.config(text=f"يتوفر تحديث جديد (الإصدار {remote})", fg=ORANGE)
+                _show_install()
                 self.refresh_update_bar()
             except Exception:
                 pass
