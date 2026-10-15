@@ -224,6 +224,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import os, sys, traceback
+import time   # ★ إضافة (الإصدار 14 — البند 9): قفل الدخول المؤقت بعد 5 محاولات فاشلة (60 ثانية)
 import sqlite3, csv, shutil
 from datetime import date, datetime
 
@@ -276,7 +277,7 @@ except Exception:
 import urllib.request   # ★ إضافة (إصدار 10): جلب التحديث — المكتبة القياسية وحدها
 import threading        # ★ إضافة (إصدار 10): فحص خلفي لا يجمّد الواجهة أبداً
 
-VERSION = "2.3"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
+VERSION = "2.4"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
 UPDATE_VERSION_URL = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/version.txt"
 UPDATE_FILE_URL    = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/main.py"
 GITHUB_TOKEN = "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"   # يملؤه المالك يدوياً عند تغييره
@@ -482,6 +483,16 @@ def _init_db_inner():
         if "permissions" not in ucols:
             conn.execute("ALTER TABLE users ADD COLUMN permissions TEXT DEFAULT '[\"add_ops\"]'")
 
+        # ★ إضافة (الإصدار 14 — البند 12): جدول سلة المحذوفات — نسخة كاملة من
+        # كل عملية تُحذف (نفس أعمدة العمليات) مع من حذفها ومتى، وترقية آمنة
+        # لا تمس أي جدول قائم إطلاقاً
+        conn.execute("""CREATE TABLE IF NOT EXISTS deleted_operations(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            op_id INTEGER, date TEXT NOT NULL, item_name TEXT NOT NULL,
+            quantity REAL NOT NULL, price REAL NOT NULL, total REAL NOT NULL,
+            type TEXT NOT NULL, customer_name TEXT, seller_name TEXT,
+            deleted_by TEXT, deleted_at TEXT NOT NULL)""")
+
 def is_closed(d):
     with connect() as conn:
         return conn.execute("SELECT 1 FROM daily_reports WHERE report_date=?", (d,)).fetchone() is not None
@@ -525,6 +536,59 @@ def set_setting(key, value):
     with connect() as conn:
         conn.execute("INSERT INTO settings(key,value) VALUES(?,?) "
                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+
+# ═════════════════════════════════════════════════════════
+# ★★★ إضافات (الإصدار 14 — الجزء الأول): نظام يوم العمل 🌙 ★★★
+# يوم العمل = التاريخ الذي تُسجَّل عليه العمليات — يُخزَّن في settings.business_day
+# وبلا سجل مخزن تعمل الدوال كلها على تاريخ اليوم (توافق كامل مع الإصدارات السابقة)
+# ═════════════════════════════════════════════════════════
+BDAY_KEY = "business_day"   # ★ إضافة (الإصدار 14): مفتاح يوم العمل المفتوح في جدول الإعدادات
+
+def del_setting(key):
+    """★ إضافة (الإصدار 14 — الجزء الأول): حذف قيمة من جدول الإعدادات (يوم العمل المغلق)"""
+    with connect() as conn:
+        conn.execute("DELETE FROM settings WHERE key=?", (key,))
+
+def business_day_open():
+    """★ إضافة (الإصدار 14 — الجزء الأول): يوم العمل المفتوح المخزن — أو None إن لم يُفتح يوم بعد"""
+    return get_setting(BDAY_KEY)
+
+def current_business_day():
+    """★ إضافة (الإصدار 14 — الجزء الأول): يوم العمل الحالي للقراءة/العرض —
+    بلا سجل مخزن يرجع تاريخ اليوم كما كانت البرنامج تعمل دائماً (توافق تام)،
+    والفرق عن business_day_open أن الحفظ يفحصها الأولى لأن الحفظ بلا يوم مفتوح ممنوع"""
+    return get_setting(BDAY_KEY) or today_str()
+
+def next_day(d):
+    """★ إضافة (الإصدار 14 — الجزء الأول): اليوم التاريخي التالي لتاريخ ISO"""
+    y, m, dd = map(int, d.split("-"))
+    return date.fromordinal(date(y, m, dd).toordinal() + 1).isoformat()
+
+def last_closed_day():
+    """★ إضافة (الإصدار 14 — الجزء الأول): آخر يوم مغلق في أرشيف التقارير (أو None)"""
+    with connect() as conn:
+        r = conn.execute("SELECT MAX(report_date) FROM daily_reports").fetchone()
+        return r[0] if r else None
+
+def set_business_day(d):
+    """★ إضافة (الإصدار 14 — الجزء الأول): فتح يوم عمل جديد بتاريخ محدد + سجل تدقيق"""
+    set_setting(BDAY_KEY, d)
+    audit("بدء يوم عمل", d)
+
+def validate_new_business_day(txt):
+    """★ إضافة (الإصدار 14 — الجزء الأول): التحقق من تاريخ يوم عمل جديد —
+    يرجع (True, التاريخ) أو (False, رسالة الخطأ):
+    صيغة سليمة + ليس يوماً مغلقاً في الأرشيف (لا تكرار لنفس التاريخ) +
+    ليس أقدم من آخر يوم مغلق في الأرشيف"""
+    v = parse_date_multi(txt)
+    if not v:
+        return False, "صيغة التاريخ غير صحيحة — الصيغ المقبولة: 2026-01-10 أو 10-01-2026 أو 10/01/2026"
+    if is_closed(v):
+        return False, f"يوم {v} مغلق في الأرشيف — لا يمكن بدء يوم عمل بتاريخ مكرر"
+    lc = last_closed_day()
+    if lc and v < lc:
+        return False, f"لا يمكن بدء يوم عمل أقدم من آخر يوم مغلق في الأرشيف ({lc})"
+    return True, v
 
 def hash_pwd(salt, pwd):
     """★ إضافة (ميزة 1): كلمة المرور تُخزن مشفرة (SHA-256 مع ملح عشوائي) ولا تُحفظ نصاً أبداً"""
@@ -710,11 +774,226 @@ def load_user_permissions(username):
 
 def active_users_list():
     """★ إضافة (إصدار 8 — الميزة 2): المستخدمون المفعّلون لقائمة تسجيل الدخول
-    المنسدلة — المدير أولاً ثم الباقي أبجدياً"""
+    المنسدلة — المدير أولاً ثم الباقي أبجدياً
+    ★ تعديل مصرح به (الإصدار 14 — الجزء صفر): الأدمن أولاً ثم المدير ثم الباقي
+    أبجدياً (ترتيب العرض فقط — حساب الأدمن يظهر في القائمة كأي حساب)"""
     with connect() as conn:
         rows = conn.execute("SELECT username FROM users WHERE active=1 "
-                            "ORDER BY (role='مدير') DESC, username").fetchall()
+                            "ORDER BY (role='أدمن') DESC, (role='مدير') DESC, username").fetchall()
     return [r[0] for r in rows]
+
+# ═════════════════════════════════════════════════════════
+# ★★★ إضافات (الإصدار 14 — الجزء صفر): دور الأدمن 👑 🔱 ★★★
+# حساب واحد أعلى من المدير: يُنشأ تلقائياً إن لم يوجد (أول تشغيل أو أي إقلاع)،
+# يملك كل صلاحيات المدير دائماً، ولا يستطيع أحد غيره تعديله أو إيقافه أو تغيير
+# كلمة مروره — وهو الإنقاذ عندما ينسى المدير كلمة مروره
+# ═════════════════════════════════════════════════════════
+ADMIN_USERNAME  = "admin"          # ★ إضافة (الإصدار 14): اسم حساب الأدمن الثابت
+ADMIN_ROLE      = "أدمن"           # ★ إضافة (الإصدار 14): اسم الدور الجديد
+ADMIN_DEFAULT_PWD = "Aa125478963"  # ★ إضافة (الإصدار 14): كلمة مرور الأدمن الافتراضية (للمالك وحده)
+
+def is_admin_role(role):
+    """★ إضافة (الإصدار 14 — الجزء صفر): هل هذا الدور هو أدمن؟"""
+    return role == ADMIN_ROLE
+
+def is_admin_user(name):
+    """★ إضافة (الإصدار 14 — الجزء صفر): هل هذا الحساب (بالاسم) هو حساب الأدمن؟"""
+    row = get_user_row(name)
+    return row is not None and row["role"] == ADMIN_ROLE
+
+def ensure_admin_account():
+    """★ إضافة (الإصدار 14 — الجزء صفر): ضمان وجود حساب الأدمن دائماً —
+    أول تشغيل (جدول users فارغ) يُنشأ فوراً قبل شاشة الدخول، وأي إقلاع لاحق
+    يفحصه ويكمله إن كان مفقوداً (بلا مساس بأي حساب قائم إطلاقاً)، ويظهر
+    في قائمة الدخول كأي حساب مفعّل"""
+    try:
+        if get_user_row(ADMIN_USERNAME) is not None:
+            return False          # موجود — لا شيء يُفعل
+        salt = secrets.token_hex(16)
+        with connect() as conn:
+            conn.execute("INSERT INTO users(username,password_hash,role,active,created_at,permissions) "
+                         "VALUES(?,?,?,?,?,?)",
+                         (ADMIN_USERNAME, salt + "$" + hash_pwd(salt, ADMIN_DEFAULT_PWD),
+                          ADMIN_ROLE, 1, datetime.now().strftime("%Y-%m-%d %H:%M"),
+                          json.dumps([k for k, _ in PERMISSIONS], ensure_ascii=False)))
+        prev = CURRENT_USER["name"]
+        CURRENT_USER["name"] = "النظام"
+        audit("إنشاء حساب أدمن", "حساب الأدمن الافتراضي (admin) — أُنشئ تلقائياً "
+              + ("عند أول تشغيل" if users_count() <= 1 else "لإكماله عند الإقلاع"))
+        CURRENT_USER["name"] = prev
+        return True
+    except Exception as e:
+        log_error(e)
+        return False
+
+def manager_level(role):
+    """★ إضافة (الإصدار 14 — الجزء صفر): هل هذا الدور في مستوى الإدارة
+    (مدير أو أدمن)؟ — الأدمن يملك كل ما للمدير تلقائياً"""
+    return role in ("مدير", ADMIN_ROLE)
+
+# ═══════════════════════════════════════════════════════════
+# ★★★ إضافات (الإصدار 14 — البند 12): سلة المحذوفات ♻️ ★★★
+# كل عملية تُحذف تُنسخ كاملة إلى deleted_operations (مع من حذفها ومتى)
+# — تُستعاد آخر حذف بزر واحد أو أي صف من نافذة السلة، ويُحتفظ بآخر 50 فقط
+# ═══════════════════════════════════════════════════════════
+RECYCLE_KEEP = 50   # ★ إضافة (الإصدار 14): أقصى عدد صفوف في سلة المحذوفات
+
+def recycle_add(op_row, deleted_by):
+    """★ إضافة (الإصدار 14 — البند 12): نسخ عملية محذوفة كاملة إلى سلة المحذوفات
+    (نفس أعمدة operations + من حذفها + وقت الحذف) ثم تنظيف تلقائي يُبقي آخر 50"""
+    with connect() as conn:
+        conn.execute("""INSERT INTO deleted_operations
+                        (op_id,date,item_name,quantity,price,total,type,customer_name,seller_name,deleted_by,deleted_at)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                     (op_row["id"], op_row["date"], op_row["item_name"], op_row["quantity"],
+                      op_row["price"], op_row["total"], op_row["type"],
+                      op_row["customer_name"], op_row["seller_name"], deleted_by,
+                      datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        conn.execute("DELETE FROM deleted_operations WHERE id NOT IN "
+                     "(SELECT id FROM deleted_operations ORDER BY id DESC LIMIT ?)", (RECYCLE_KEEP,))
+
+def recycle_list():
+    """★ إضافة (الإصدار 14 — البند 12): كل صفوف سلة المحذوفات من الأحدث"""
+    with connect() as conn:
+        return conn.execute("SELECT * FROM deleted_operations ORDER BY id DESC").fetchall()
+
+def recycle_last():
+    """★ إضافة (الإصدار 14 — البند 12): آخر عملية حُذفت (أو None)"""
+    with connect() as conn:
+        return conn.execute("SELECT * FROM deleted_operations ORDER BY id DESC LIMIT 1").fetchone()
+
+def recycle_restore(rec_id):
+    """★ إضافة (الإصدار 14 — البند 12): استعادة صف من السلة إلى جدول العمليات —
+    يُعاد بنفس بياناته الأصلية كلها ثم يُحذف من السلة؛ يرفض الاستعادة على يوم
+    مغلق (تقريره محفوظ) ويرجع (True, None) أو (False, رسالة)"""
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM deleted_operations WHERE id=?", (rec_id,)).fetchone()
+    if row is None:
+        return False, "العملية غير موجودة في سلة المحذوفات"
+    if is_closed(row["date"]):
+        return False, (f"يوم {row['date']} مغلق في الأرشيف — لا يمكن الاستعادة عليه.\n"
+                       "أعد فتح اليوم من شاشة الأرشيف أولاً ثم استعدها.")
+    with connect() as conn:
+        conn.execute("""INSERT INTO operations(date,item_name,quantity,price,total,type,customer_name,seller_name)
+                        VALUES(?,?,?,?,?,?,?,?)""",
+                     (row["date"], row["item_name"], row["quantity"], row["price"], row["total"],
+                      row["type"], row["customer_name"], row["seller_name"]))
+        conn.execute("DELETE FROM deleted_operations WHERE id=?", (rec_id,))
+    return True, None
+
+# ═══════════════════════════════════════════════════════════
+# ★★★ إضافات (الإصدار 14 — الجزء الثاني): تحسينات الجداول 📊 ★★★
+# (5) فرز أي عمود بالنقر على رأسه — عرض فقط لا يمس قاعدة البيانات
+# (6) صفوف متناوبة الألوان — أبيض و #f8fafc والمرتجعات تظل حمراء
+# ═══════════════════════════════════════════════════════════
+def sort_tree(tv, col):
+    """★ إضافة (الإصدار 14 — البند 5): فرز عام لأي جدول Treeview بالنقر على
+    رأس العمود — أول نقرة ترتيباً تنازلياً ثم تصاعدياً بالتناوب مع سهم ▼/▲،
+    ويفرز الأرقام بذكاء (يتجاهل الفواصل ويقبل الأرقام العربية) والنصوص كنصوص؛
+    ترتيب الصفوف في العرض فقط (move) ولا يُمس أي سجل في قاعدة البيانات"""
+    try:
+        states = getattr(tv, "_sort_states", {})
+        desc = not states.get(col, False)      # النقرة الأولى: تنازلي
+        states[col] = desc
+        tv._sort_states = states
+        def skey(val):
+            s = str(val).translate(AR_DIGITS).replace(",", "").replace("،", "") \
+                              .replace("٫", ".").strip()
+            if s == "":
+                return (2, s)
+            try:
+                return (0, float(s))
+            except ValueError:
+                return (1, s)
+        items = [(tv.set(k, col) or "", k) for k in tv.get_children("")]
+        items.sort(key=lambda t: skey(t[0]), reverse=desc)
+        for i, (_v, k) in enumerate(items):
+            tv.move(k, "", i)
+        orig = getattr(tv, "_sort_orig", {})
+        for c in tv["columns"]:
+            base = orig.get(c, str(c))
+            if c == col:
+                tv.heading(c, text=base + (" ▼" if desc else " ▲"))
+            else:
+                tv.heading(c, text=base)
+    except Exception:
+        pass
+
+def enable_tree_sorting(tv):
+    """★ إضافة (الإصدار 14 — البند 5): تفعيل الفرز على كل رؤوس أعمدة جدول —
+    يحفظ نص الرأس الأصلي كي يعود سليماً بعد إضافة/إزالة الأسهم"""
+    try:
+        tv._sort_states = {}
+        tv._sort_orig = {str(c): str(c) for c in tv["columns"]}
+        for c in tv["columns"]:
+            tv.heading(c, command=lambda col=c: sort_tree(tv, col))
+    except Exception:
+        pass
+
+def config_tree_stripes(tv):
+    """★ إضافة (الإصدار 14 — البند 6): تفعيل الصفوف المتناوبة على جدول —
+    شارة «odd» بخلفية #f8fafc للصفوف الفردية، والشارات الأخرى (كمرتجع الأحمر)
+    لا تتأثر لأنها تلون النص لا الخلفية"""
+    try:
+        tv.tag_configure("odd", background="#f8fafc")
+    except Exception:
+        pass
+
+def stripe_tags(i, ret=False, extra=()):
+    """★ إضافة (الإصدار 14 — البند 6): شارات الصف المتناوب — ترجع شارة «odd»
+    للصفوف الفردية مع شارة المرتجع الحمراء إن كان مرتجعاً (النص الأحمر باقٍ)"""
+    return tuple(extra) + (("ret",) if ret else ()) + (("odd",) if i % 2 else ())
+
+# ═══════════════════════════════════════════════════════════
+# ★★★ إضافة (الإصدار 14 — البند 13): فلترة إدخال الأرقام ✨ ★★★
+# حقلا الكمية والسعر (عملية جديدة + فاتورة الأصناف) لا يقبلان إلا الأرقام
+# العربية ٠-٩ والإنجليزية 0-9 وفواصل الكسور (٫ .) — أي حرف آخر لا يُكتب أصلاً
+# ═══════════════════════════════════════════════════════════
+NUM_INPUT_ALLOWED = set("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹0123456789.٫")
+
+def digits_only_filter(entry):
+    """★ إضافة (الإصدار 14 — البند 13): منع كتابة أي حرف غير رقمي في حقل —
+    يسمح بالأرقام العربية والإنجليزية وفاصلة الكسر فقط (والمسح/الأسهم تعمل
+    دائماً)؛ الفلترة على الكتابة فقط ولا تغير أي منطق تحقق قائم"""
+    def _check(new):
+        try:
+            return all(ch in NUM_INPUT_ALLOWED for ch in new)
+        except Exception:
+            return True
+    entry.configure(validate="key", vcmd=(entry.register(_check), "%P"))
+
+# ═══════════════════════════════════════════════════════════
+# ★★★ إضافة (الإصدار 14 — البند 9): قفل الدخول المؤقت بعد المحاولات الفاشلة 🛡️ ★★★
+# نفس اسم المستخدم 5 محاولات فاشلة متتالية = قفل 60 ثانية مع عداد تنازلي على
+# زر الدخول «انتظر 00:47» — والدخول الناجح يصفّر العداد، وكل محاولة فاشلة
+# تُسجل في سجل التدقيق مع رقم المحاولة
+# ═══════════════════════════════════════════════════════════
+LOGIN_FAILURES = {}        # ★ إضافة (الإصدار 14): عدد المحاولات الفاشلة المتتالية لكل اسم مستخدم
+LOGIN_LOCKED_UNTIL = {}    # ★ إضافة (الإصدار 14): وقت نهاية القفل لكل اسم مستخدم (epoch)
+LOGIN_MAX_FAILS = 5        # ★ إضافة (الإصدار 14): حد المحاولات قبل القفل
+LOGIN_LOCK_SECONDS = 60    # ★ إضافة (الإصدار 14): مدة القفل بالثواني
+
+def login_lock_remaining(name):
+    """★ إضافة (الإصدار 14 — البند 9): الثواني المتبقية من قفل اسم المستخدم (0 إن لم يُقفل)"""
+    try:
+        rem = LOGIN_LOCKED_UNTIL.get(name, 0) - time.time()
+        return rem if rem > 0 else 0
+    except Exception:
+        return 0
+
+def login_register_failure(name):
+    """★ إضافة (الإصدار 14 — البند 9): تسجيل محاولة فاشلة جديدة — يرجع رقمها
+    التتابعي، وعند بلوغ 5 متتالية يُقفل الحساب 60 ثانية ويُصفَّر العداد
+    (بعد انتهاء القفل تُمنح 5 محاولات جديدة) ويرجع رقم المحاولة مع علم القفل"""
+    n = LOGIN_FAILURES.get(name, 0) + 1
+    locked = False
+    if n >= LOGIN_MAX_FAILS:
+        LOGIN_LOCKED_UNTIL[name] = time.time() + LOGIN_LOCK_SECONDS
+        LOGIN_FAILURES[name] = 0
+        locked = True
+    else:
+        LOGIN_FAILURES[name] = n
+    return n, locked
 
 # ═══════════════════════════════════════════════════════════
 # ★★★ إضافات الإصدار 4 — الميزة 5: تلميحات Tooltip خفيفة ★★★
@@ -1992,6 +2271,12 @@ class App(tk.Tk):
         self.geometry("1100x760"); self.minsize(950, 620)
         self.configure(bg=BG)
         init_db()
+        # ★ إضافة (الإصدار 14 — الجزء صفر): ضمان حساب الأدمن عند كل إقلاع —
+        # يُنشأ إن لم يوجد (أول تشغيل أو نقص) ولا يمس أي حساب قائم إطلاقاً
+        try:
+            ensure_admin_account()
+        except Exception:
+            pass
         # ★ إضافة (إصدار 6): فحص مكتبات الطباعة عند بدء التشغيل — إن لم تتوفر
         # والطباعة معدّة مسبقاً (طابعة محفوظة أو طباعة تلقائية مفعلة) تظهر
         # ملاحظة عربية بأمر التثبيت مع ملاحظات بدء التشغيل، والبرنامج يعمل
@@ -2095,6 +2380,17 @@ class App(tk.Tk):
         self.show_page("new")
         self.protocol("WM_DELETE_WINDOW", self.exit_app)
 
+        # ★ إضافة (الإصدار 14 — الجزء الأول): الفحص الذكي ليوم العمل بعد الدخول
+        # مباشرة — يُسأل مرة واحدة عند الإقلاع فقط (لا عند كل حفظ): نفس اليوم
+        # = دخول صامت، أقدم من اليوم = ثلاثة خيارات (إغلاقه كتقرير / الاستمرار
+        # عليه بعد منتصف الليل / إلغاء الدخول)، ولا يوم مخزن = بدء يوم جديد
+        # (بلا سؤال على قاعدة جديدة تماماً — توافق كامل مع الإصدارات السابقة)
+        try:
+            self.business_day_startup_check()
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+        self.refresh_business_day_ui()
+
         # ★ ملاحظات بدء التشغيل (ترقية قاعدة / حجر صحي) تُعرض مرة واحدة
         if NOTES:
             messagebox.showinfo("ملاحظات بدء التشغيل", "\n\n".join(NOTES))
@@ -2181,12 +2477,17 @@ class App(tk.Tk):
         tk.Label(sb, text="والمُرتجعات", bg=SIDEBAR, fg="#94a3b8", font=F).pack(pady=(0, 8))
         # ★ إضافة (إصدار 3 — ميزة 7): اسم المستخدم الحالي ودوره تحت الشعار
         # ★ تعديل ضروري معلن (إصدار 4 — ميزة 1): حفظ مرجع اللافتة لتحديث الاسم بعد تبديل المستخدم
+        # ★ تعديل مصرح به (الإصدار 14 — الجزء صفر): لون الأدمن بنفسجي فاتح
+        # (#a78bfa — تدرّج فاتح من بنفسجية #7c3aed ليظهر بوضوح على الشريط الداكن)
         self.lbl_user = tk.Label(sb, text=f"👤 {self.user_name} ({self.role})", bg=SIDEBAR,
-                                 fg="#93c5fd", font=("Segoe UI", 10, "bold"))
+                                 fg=("#a78bfa" if self.role == ADMIN_ROLE else "#93c5fd"),
+                                 font=("Segoe UI", 10, "bold"))
         self.lbl_user.pack(pady=(0, 14))
 
         self.nav_buttons = {}
-        for key, label in [("new", "➕  عملية جديدة"), ("today", "📋  عمليات اليوم"),
+        # ★ تعديل مصرح به (الإصدار 14 — الجزء الأول): زر «عمليات اليوم» أصبح
+        # «عمليات يوم العمل» — يخدم تاريخ يوم العمل المفتوح لا تاريخ الجهاز
+        for key, label in [("new", "➕  عملية جديدة"), ("today", "📋  عمليات يوم العمل"),
                            ("archive", "🗂️  الأرشيف والتقارير"), ("search", "🔎  بحث")]:
             b = tk.Button(sb, text=label, font=FB, bd=0, cursor="hand2", anchor="e",
                           bg=SIDEBAR, fg="#cbd5e1", activebackground=ACCENT,
@@ -2235,7 +2536,9 @@ class App(tk.Tk):
         self.nav_buttons["sellers"] = b_rep
         # ★ إضافة (إصدار 4 — ميزة 1): قائمة أزرار المدير (تُخفى عن البائع وتظهر للمدير)
         self.manager_btns = [b_dash, b_aud, b_usr, b_rep]
-        if self.role != "مدير":
+        # ★ تعديل مصرح به (الإصدار 14 — الجزء صفر): أزرار الإدارة تظهر للأدمن
+        # أيضاً — كان الشرط «ليس مديراً» فأصبح «ليس في مستوى الإدارة»
+        if not manager_level(self.role):
             for b in self.manager_btns:
                 b.pack_forget()
 
@@ -2250,7 +2553,7 @@ class App(tk.Tk):
         self.nav_buttons["print"] = b_prn
         self.manager_btns.append(b_prn)
         add_tip(b_prn, "اختيار الطابعة الحرارية واسم المحل والطباعة التجريبية — للمدير فقط")
-        if self.role != "مدير":
+        if not manager_level(self.role):
             b_prn.pack_forget()
 
         # ★ إضافة (إصدار 7 — الطبقة 4): زر النسخ والاستعادة — للمدير فقط،
@@ -2264,7 +2567,7 @@ class App(tk.Tk):
         self.nav_buttons["backups"] = b_bkp
         self.manager_btns.append(b_bkp)
         add_tip(b_bkp, "النسخ اليومية والشهرية والفورية واستعادة أي نسخة بأمان — للمدير فقط")
-        if self.role != "مدير":
+        if not manager_level(self.role):
             b_bkp.pack_forget()
 
         # ★ إضافة (إصدار 10 — نظام التحديث التلقائي): زر «التحديث» — للمدير
@@ -2309,13 +2612,14 @@ class App(tk.Tk):
             w.pack_forget()
         self.btn_user_menu = tk.Button(
             sb, text=f"👤 {self.user_name} ({self.role})", font=FB, bd=0, cursor="hand2",
-            anchor="e", bg="#0f172a", fg="#93c5fd", activebackground=ACCENT,
+            anchor="e", bg="#0f172a", fg=("#a78bfa" if self.role == ADMIN_ROLE else "#93c5fd"),
+            activebackground=ACCENT,
             activeforeground="white", padx=16, pady=10, highlightthickness=1,
             highlightbackground="#334155", command=self.show_user_menu)
         self.btn_user_menu.pack(fill="x", padx=10, side="bottom", pady=(3, 20))
         add_tip(self.btn_user_menu,
                 "قائمة حسابك: 🔑 تغيير كلمة المرور • 💾 نسخة احتياطية الآن • "
-                "🔄 تبديل المستخدم • ⏻ خروج")
+                "🔄 تبديل المستخدم • 🔒 قفل الجلسة • ⏻ خروج")
 
     def refresh_sidebar_permissions(self):
         """★ إضافة (إصدار 8 — الميزة 5+6): بناء ظهور أزرار الشريط الجانبي حسب
@@ -2357,7 +2661,8 @@ class App(tk.Tk):
                 self.group_headers[gtitle] = h
         # تحديث نص زر قائمة المستخدم بعد أي دخول/تبديل
         if getattr(self, "btn_user_menu", None) is not None:
-            self.btn_user_menu.config(text=f"👤 {self.user_name} ({self.role})")
+            self.btn_user_menu.config(text=f"👤 {self.user_name} ({self.role})",
+                                      fg=("#a78bfa" if self.role == ADMIN_ROLE else "#93c5fd"))
 
     def show_user_menu(self):
         """★ إضافة (إصدار 8 — الميزة 7): قائمة المستخدم المنسدلة — تجمع إعداداته
@@ -2367,6 +2672,10 @@ class App(tk.Tk):
         m.add_command(label="🔑 تغيير كلمة المرور", command=self.change_password_dialog)
         m.add_command(label="💾 نسخة احتياطية الآن", command=self.backup_now)
         m.add_command(label="🔄 تبديل المستخدم", command=self.switch_user)
+        # ★ إضافة (الإصدار 14 — البند 10): قفل الجلسة — إخفاء البرنامج كاملاً
+        # خلف نافذة كلمة مرور الحساب الحالي (الاسم معروض ثابتاً)، والعودة
+        # تُعيد كل شيء كما كان بالضبط (الصفحة والسلة والنوافذ)
+        m.add_command(label="🔒 قفل الجلسة", command=self.session_lock)
         m.add_separator()
         # ★ إضافة (إصلاح 2): مدخل دائم واضح لنافذة «عن البرنامج» لكل
         # المستخدمين من قائمة المستخدم — قراءة فقط بلا أي اتصال شبكي
@@ -2374,7 +2683,8 @@ class App(tk.Tk):
         # ★ إضافة (إصلاح 3 — البند ب): «فحص التحديثات الآن» دائم الظهور
         # للمدير — فحص فوري برسالة نتيجة عربية دائماً (وللشريط الأصفر زره
         # الخاص بجانب «تحديث الآن")
-        if self.role == "مدير":
+        # ★ تعديل مصرح به (الإصدار 14 — الجزء صفر): الفحص والأرشيف للأدمن أيضاً
+        if manager_level(self.role):
             m.add_command(label="🔄 فحص التحديثات الآن",
                           command=lambda: self.update_check_manual(None))
             # ★ إضافة (أرشيف الإصدارات): عرض أرشيف الإصدارات — للمدير فقط
@@ -2397,6 +2707,12 @@ class App(tk.Tk):
         # التحديث الأصفر فوقه مباشرة (before=) دون أي تغيير آخر في البناء
         self.stats_bar_frame = bar
         self.stats_widgets = {}
+        # ★ إضافة (الإصدار 14 — الجزء الأول): سطر يوم العمل أعلى البطاقات —
+        # «📅 يوم العمل: [التاريخ] [🌙 بعد منتصف الليل]» والهلال يظهر فقط
+        # عندما يكون تاريخ الجهاز أحدث من يوم العمل المفتوح
+        self.lbl_bday = tk.Label(bar, text="", bg=BG, fg=GRAY,
+                                 font=("Segoe UI", 10, "bold"), anchor="e")
+        self.lbl_bday.pack(fill="x", side="top", pady=(0, 3))
         # ★ تعديل (إصدار 5 — نظام الأنواع الثلاثة): الشريط العلوي 5 بطاقات —
         # عدد العمليات (رمادي) / نقداً (أخضر) / شبكة (أزرق) / المرتجعات (أحمر) /
         # الإجمالي (أزرق) — لفصل مبيعات الدرج النقدي عن مبيعات جهاز الشبكة
@@ -2411,13 +2727,18 @@ class App(tk.Tk):
     def refresh_stats(self):
         # ★ تعديل (إصدار 5 — نظام الأنواع الثلاثة): day_totals ترجع الآن
         # (عدد العمليات، نقداً، شبكة، المرتجعات، الإجمالي)
-        n, cash, netw, rets, net = day_totals(today_str())
+        # ★ تعديل مصرح به (الإصدار 14 — الجزء الأول): البطاقات تعرض إحصائيات
+        # يوم العمل المفتوح (وبلا يوم مفتوح = تاريخ اليوم كما كان دائماً)
+        n, cash, netw, rets, net = day_totals(current_business_day())
         self.stats_widgets["عدد العمليات"].config(text=str(n))
         self.stats_widgets["نقداً"].config(text=money(cash))
         self.stats_widgets["شبكة"].config(text=money(netw))
         self.stats_widgets["المرتجعات"].config(text=money(rets))
         self.stats_widgets["الإجمالي"].config(text=money(net),
                                                fg=(GREEN if net >= 0 else RED))
+        # ★ إضافة (الإصدار 14 — الجزء الأول): تحديث سطر يوم العمل وأزراره
+        # مع كل تحديث للشريط العلوي (نقطة تجميع واحدة تُستدعى مع كل تنقل)
+        self.refresh_business_day_ui()
 
     def show_page(self, key):
         for k, b in self.nav_buttons.items():
@@ -2456,10 +2777,14 @@ class App(tk.Tk):
         in2 = field_row("الكمية:")
         self.e_qty = tk.Entry(in2, font=F, justify="center", relief="solid", bd=1, width=30)
         self.e_qty.pack(side="right", ipady=4)
+        # ★ إضافة (الإصدار 14 — البند 13): فلترة إدخال الكمية/السعر — أرقام
+        # عربية/إنجليزية وفاصلة الكسر فقط، أي حرف آخر لا يُكتب من الأساس
+        digits_only_filter(self.e_qty)
 
         in3 = field_row("السعر:")
         self.e_price = tk.Entry(in3, font=F, justify="center", relief="solid", bd=1, width=30)
         self.e_price.pack(side="right", ipady=4)
+        digits_only_filter(self.e_price)   # ★ إضافة (الإصدار 14 — البند 13)
 
         # ★ إضافة (ميزة 5): صف اسم العميل الاختياري — يُخزن مع العملية
         in_c = field_row("اسم العميل:")
@@ -2511,7 +2836,15 @@ class App(tk.Tk):
         if not self.has_permission("add_ops"):
             messagebox.showwarning("صلاحية", "ليست لديك صلاحية «إضافة عمليات وفواتير»")
             return
-        d = today_str()
+        # ★ تعديل مصرح به (الإصدار 14 — الجزء الأول): الحفظ صار على يوم العمل
+        # المفتوح لا تاريخ الجهاز (وبعد منتصف الليل يستمر على يوم الأمس)،
+        # وبلا يوم مفتوح الحفظ ممنوع برسالة واضحة حتى يُبدأ يوم جديد
+        d = business_day_open()
+        if not d:
+            messagebox.showwarning("لا يوم عمل مفتوح",
+                "لا يمكن حفظ العمليات — لا يوم عمل مفتوح.\n"
+                "اضغط «▶️ بدء يوم جديد» في شاشة عمليات يوم العمل.")
+            return
         if is_closed(d):
             messagebox.showwarning("اليوم مغلق",
                 "تم إغلاق اليوم وحفظ تقريره.\nلا يمكن إضافة عمليات على يوم مغلق.\n"
@@ -2561,14 +2894,30 @@ class App(tk.Tk):
             self.cb_inv_item["values"] = vals
 
     def update_closed_banner(self):
-        if is_closed(today_str()):
-            self.banner_closed.config(text="⚠️ تم إغلاق اليوم وحفظ تقريره — لا يمكن إضافة عمليات. (يمكن إعادة الفتح من الأرشيف)")
+        # ★ تعديل مصرح به (الإصدار 14 — الجزء الأول): اللافتة تتبع يوم العمل
+        # المفتوح — بلا يوم مفتوح توجّه لزر بدء يوم جديد، ومغلقاً كما كانت
+        d = business_day_open()
+        if not d:
+            self.banner_closed.config(text="⚠️ لا يوم عمل مفتوح — لا يمكن حفظ العمليات. (ابدأ يوماً جديداً من شاشة عمليات يوم العمل)")
+        elif is_closed(d):
+            self.banner_closed.config(text="⚠️ تم إغلاق يوم العمل وحفظ تقريره — لا يمكن إضافة عمليات. (يمكن إعادة الفتح من الأرشيف)")
         else:
             self.banner_closed.config(text="")
 
     # ---------- صفحة عمليات اليوم ----------
     def build_today_page(self, p):
-        head = self.page_head(p, "📋 عمليات اليوم", "الإحصائيات ظاهرة في الشريط العلوي ↑")
+        # ★ تعديل مصرح به (الإصدار 14 — الجزء الأول): الرأس يُبنى يدوياً بدل
+        # page_head كي يُحفظ مرجع العنوان الديناميكي «عمليات يوم العمل [التاريخ]»
+        # (بنفس شكل page_head ونفس خطوطه تماماً — التاريخ يُحدّث من
+        # refresh_business_day_ui مع كل تغيّر ليوم العمل)
+        head = tk.Frame(p, bg=BG)
+        head.pack(fill="x", padx=25, pady=(18, 8))
+        head_right = tk.Frame(head, bg=BG); head_right.pack(side="right")
+        self.lbl_today_title = tk.Label(head_right, text="📋 عمليات يوم العمل",
+                                        bg=BG, fg=DARK, font=FT)
+        self.lbl_today_title.pack(anchor="e")
+        tk.Label(head_right, text="الإحصائيات ظاهرة في الشريط العلوي ↑", bg=BG, fg=GRAY,
+                 font=("Segoe UI", 10)).pack(anchor="e")
         self.mk_btn(head, "🔄 تحديث", self.refresh_today, "#475569").pack(side="left", pady=6)
 
         # ★ إضافة (إصدار 4 — ميزة 4): فلتر النوع بجانب زر التحديث —
@@ -2602,7 +2951,9 @@ class App(tk.Tk):
         self.cb_today_filter.current(0)
         self.cb_today_filter.pack(side="right", padx=(0, 6))
         self.cb_today_filter.bind("<<ComboboxSelected>>", lambda e: self.refresh_today())
-        if self.role != "مدير":
+        # ★ تعديل مصرح به (الإصدار 14 — الجزء صفر): الأدمن يرى كل العمليات
+        # وفلتر البائعين كالمدير تماماً (كان الشرط للمدير وحده)
+        if not manager_level(self.role):
             self.lbl_today_only.pack(side="left", padx=12)
         else:
             ffr.pack(side="left", padx=12)
@@ -2616,15 +2967,48 @@ class App(tk.Tk):
             [80, 110, 100, 80, 190, 140, 100, 100])
         frm.pack(fill="both", expand=True, padx=25, pady=8)
         self.tv_today.tag_configure("ret", foreground=RED)
+        # ★ إضافة (الإصدار 14 — الجزء الثاني): فرز الأعمدة + صفوف متناوبة +
+        # تحديد متعدد لجدول عمليات يوم العمل (عرض فقط لا يمس قاعدة البيانات)
+        self.tv_today.configure(selectmode="extended")
+        enable_tree_sorting(self.tv_today)
+        config_tree_stripes(self.tv_today)
+        # ★ إضافة (الإصدار 14 — البندان 7+8): سطر العد والمجموع الدائم أسفل
+        # الجدول — يعرض «اعرض [عدد] صفوف — المجموع الكلي» وعند التحديد يتغير
+        # إلى «المحدد: [عدد] صفوف — المجموع: [مجموع المبيع]» لحظياً
+        self.lbl_today_sel = tk.Label(p, text="", bg=BG, fg="#1d4ed8", font=FB, anchor="e")
+        self.lbl_today_sel.pack(fill="x", padx=25, pady=(0, 2))
+        self.tv_today.bind("<<TreeviewSelect>>", lambda _e: self.on_today_select())
 
         bar = tk.Frame(p, bg=BG); bar.pack(fill="x", padx=25, pady=(0, 18))
         self.mk_btn(bar, "🗑 حذف العملية المحددة", self.delete_selected, RED).pack(side="right", padx=6)
+        # ★ إضافة (الإصدار 14 — البند 12): زر استعادة آخر عملية محذوفة من سلة
+        # المحذوفات + زر فتح السلة كاملة (استعادة أي صف) — لمن يملك صلاحية الحذف
+        b_undo = self.mk_btn(bar, "♻️ آخر حذف", self.restore_last_deleted, "#0d9488")
+        b_undo.pack(side="right", padx=6)
+        add_tip(b_undo, "استعادة آخر عملية حُذفت إلى جدول العمليات مرة أخرى")
+        b_bin = self.mk_btn(bar, "🗑 سلة المحذوفات", self.recycle_bin_dialog, "#475569")
+        b_bin.pack(side="right", padx=6)
+        add_tip(b_bin, "نافذة كل العمليات المحذوفة — استعادة أي صف منها (آخر 50)")
         self.btn_close = self.mk_btn(bar, "🔒 إغلاق اليوم وحفظ التقرير", self.close_day, ORANGE)
         self.btn_close.pack(side="left", padx=6)
+        # ★ إضافة (الإصدار 14 — الجزء الأول): زر بدء يوم عمل جديد — يحل محل
+        # زر الإغلاق عندما لا يوم مفتوح (يديره refresh_business_day_ui)
+        self.btn_start_day = self.mk_btn(bar, "▶️ بدء يوم جديد", self.start_new_business_day, GREEN)
+        add_tip(self.btn_start_day, "بدء يوم عمل جديد بتاريخ اليوم (أو تاريخ تدخله يدوياً) — يُفتح الحفظ من جديد")
 
     def refresh_today(self):
-        d = today_str()
+        # ★ تعديل مصرح به (الإصدار 14 — الجزء الأول): الصفحة تعرض عمليات يوم
+        # العمل المفتوح [التاريخ] لا تاريخ الجهاز — وبلا يوم مفتوح تُفرَّغ
+        # ويظهر تنبيه البدء (والحفظ معطل من save_op/save_invoice)
+        d = business_day_open()
         self.tv_today.delete(*self.tv_today.get_children())
+        if not d:
+            self.lbl_closed.config(text="⚠️ لا يوم عمل مفتوح — الحفظ معطل حتى بدء يوم جديد",
+                                   fg=RED)
+            if hasattr(self, "lbl_today_sel"):
+                self.lbl_today_sel.config(text="اعرض 0 صفوف — المجموع الكلي: 0.00")
+            self.btn_close.config(state="disabled")
+            return
         # ★ تعديل ضروري معلن (إصدار 3 — ميزة 4): البائع يرى عملياته فقط،
         # والمدير يرى الكل أو بائعاً محدداً من القائمة المنسدلة
         q = "SELECT * FROM operations WHERE date=?"
@@ -2636,7 +3020,9 @@ class App(tk.Tk):
                 self.today_type_var.get() not in ("الكل", ""):
             q += " AND type=?"
             params.append(self.today_type_var.get())
-        if self.role != "مدير":
+        # ★ تعديل مصرح به (الإصدار 14 — الجزء صفر): الأدمن كالمدير — يرى الكل
+        # ويفلتر بالبائع (كان الشرط «مدير فقط» للرؤية الكاملة)
+        if not manager_level(self.role):
             q += " AND seller_name=?"
             params.append(self.user_name)
         elif hasattr(self, "cb_today_filter"):
@@ -2647,15 +3033,22 @@ class App(tk.Tk):
         q += " ORDER BY id DESC"
         with connect() as conn:
             rows = conn.execute(q, params).fetchall()
-        for r in rows:
+        total_shown = 0.0
+        for i, r in enumerate(rows):
+            total_shown += (r["total"] or 0)
+            # ★ إضافة (الإصدار 14 — البند 6): شارة الصف المتناوب مع بقاء المرتجع أحمر
             self.tv_today.insert("", "end", iid=str(r["id"]),
-                tags=(("ret",) if r["type"] == "مرتجع" else ()),
+                tags=stripe_tags(i, r["type"] == "مرتجع"),
                 values=(r["type"], money(r["total"]), money(r["price"]),
                         f'{r["quantity"]:g}', r["item_name"],
                         (r["customer_name"] or ""),
                         (r["seller_name"] or "—"), r["date"]))   # ★ ميزة 3+5 (إصدار 3): عمودا العميل والبائع
+        # ★ إضافة (الإصدار 14 — البند 8): العداد الدائم — يُحدّث مع كل تعبئة
+        if hasattr(self, "lbl_today_sel"):
+            self.lbl_today_sel.config(
+                text=f"اعرض {len(rows)} صفوف — المجموع الكلي: {money(total_shown)}")
         # ★ إضافة (إصدار 3 — ميزة 4): تحديث قائمة الفلترة بأسماء بائعي اليوم
-        if self.role == "مدير" and hasattr(self, "cb_today_filter"):
+        if manager_level(self.role) and hasattr(self, "cb_today_filter"):
             with connect() as conn:
                 names = [r[0] or "غير محدد" for r in conn.execute(
                     "SELECT DISTINCT seller_name FROM operations WHERE date=? "
@@ -2663,7 +3056,30 @@ class App(tk.Tk):
             self.cb_today_filter["values"] = ["الكل"] + names
         closed = is_closed(d)
         self.btn_close.config(state=("disabled" if closed else "normal"))
-        self.lbl_closed.config(text=("🔒 تم إغلاق هذا اليوم وحفظ تقريره في الأرشيف" if closed else ""))
+        self.lbl_closed.config(text=("🔒 تم إغلاق هذا اليوم وحفظ تقريره في الأرشيف" if closed else ""),
+                               fg=GREEN)
+
+    # ★ إضافة (الإصدار 14 — البندان 7+8): مجموع الصفوف المحددة — «المحدد:
+    # [عدد] صفوف — المجموع: [مجموع عمود المبيع]» لحظياً مع كل تحديد، والعودة
+    # إلى العداد الدائم عند إلغاء التحديد
+    def on_today_select(self):
+        try:
+            sel = self.tv_today.selection()
+            if not sel:
+                # إلغاء التحديد → العودة إلى العداد الدائم لكل الصفوف المعروضة
+                kids = self.tv_today.get_children("")
+                tot = sum((to_num(self.tv_today.set(iid, "المبيع")) or 0) for iid in kids)
+                self.lbl_today_sel.config(
+                    text=f"اعرض {len(kids)} صفوف — المجموع الكلي: {money(tot)}")
+                return
+            tot = 0.0
+            for iid in sel:
+                v = to_num(self.tv_today.set(iid, "المبيع")) or 0
+                tot += v
+            self.lbl_today_sel.config(
+                text=f"المحدد: {len(sel)} صفوف — المجموع: {money(tot)}")
+        except Exception:
+            pass
 
     def delete_selected(self):
         # ★ تعديل مصرح به (إصدار 8 — الميزة 5): صلاحية «حذف عملية» بدل «المدير فقط»
@@ -2672,28 +3088,164 @@ class App(tk.Tk):
         sel = self.tv_today.selection()
         if not sel:
             messagebox.showinfo("تنبيه", "اختر عملية من الجدول أولاً"); return
-        if is_closed(today_str()):
+        # ★ تعديل مصرح به (الإصدار 14 — الجزء الأول): الحذف من يوم العمل المفتوح
+        d = business_day_open()
+        if not d:
+            messagebox.showwarning("لا يوم عمل مفتوح", "لا يمكن الحذف — لا يوم عمل مفتوح"); return
+        if is_closed(d):
             messagebox.showwarning("اليوم مغلق", "لا يمكن الحذف — اليوم مغلق"); return
         if not messagebox.askyesno("تأكيد", "هل تريد حذف هذه العملية نهائياً؟"):
             return
         with connect() as conn:
+            # ★ إضافة (الإصدار 14 — البند 12): نسخة كاملة إلى سلة المحذوفات قبل
+            # الحذف — تُستعاد بزر «♻️ آخر حذف» أو من نافذة السلة (رسالة التأكيد
+            # نفسها بقيت كما هي تماماً)
+            op_row = conn.execute("SELECT * FROM operations WHERE id=?", (int(sel[0]),)).fetchone()
+            if op_row is not None:
+                recycle_add(op_row, CURRENT_USER["name"])
             conn.execute("DELETE FROM operations WHERE id=?", (int(sel[0]),))
         audit("حذف عملية", f"رقم {sel[0]}")     # ★ إضافة (ميزة 2): تسجيل الحذف
         self.refresh_today(); self.refresh_stats()
-        self.lbl_status.config(text="🗑 تم حذف العملية", fg=RED)
+        self.lbl_status.config(text="🗑 تم حذف العملية (قابلة للاستعادة من ♻️ آخر حذف)", fg=RED)
+
+    # ★★★ إضافات (الإصدار 14 — البند 12): استعادة المحذوفات ♻️ ★★★
+    # الزران في شريط عمليات اليوم يستدعيان هاتين الدالتين — لمن يملك صلاحية
+    # الحذف مثل حذف العمليات نفسها (الاستعادة عكس الحذف فحُكِمت بنفس الصلاحية)
+    def restore_last_deleted(self):
+        """★ إضافة (الإصدار 14 — البند 12): زر «♻️ آخر حذف» — يستعيد آخر عملية
+        حُذفت إلى جدول العمليات بنفس بياناتها الأصلية كاملة (التاريخ والنوع
+        والعميل والبائع) — برسالة تأكيد تعرض ما سيُستعاد قبل التنفيذ، ويرفض
+        الاستعادة على يوم مغلق في الأرشيف"""
+        if not self.require_admin("delete_op"):
+            return
+        latest = recycle_last()
+        if latest is None:
+            messagebox.showinfo("سلة المحذوفات", "السلة فارغة — لا توجد عملية محذوفة حديثاً")
+            return
+        if not messagebox.askyesno("تأكيد الاستعادة",
+                f"استعادة آخر عملية حُذفت إلى جدول العمليات؟\n\n"
+                f"الصنف: {latest['item_name']}\n"
+                f"{latest['quantity']:g} × {money(latest['price'])} = {money(latest['total'])} ({latest['type']})\n"
+                f"حُذفت بواسطة: {latest['deleted_by'] or '—'} في {latest['deleted_at']}"):
+            return
+        ok, err = recycle_restore(latest["id"])
+        if not ok:
+            messagebox.showerror("لا يمكن الاستعادة", err)
+            return
+        audit("استعادة عملية", f"رقم {latest['op_id']} — {latest['item_name']} — {money(latest['total'])}")
+        self.refresh_today(); self.refresh_stats()
+        self.lbl_status.config(text="♻️ تمت استعادة العملية المحذوفة — جدول العمليات تحدّث", fg=GREEN)
+
+    def recycle_bin_dialog(self):
+        """★ إضافة (الإصدار 14 — البند 12): نافذة «🗑 سلة المحذوفات» — كل العمليات
+        المحذوفة (آخر 50) بأعمدتها كاملة مع من حذفها ومتى، استعادة أي صف بزر
+        «♻️ استعادة المحدد» أو بالنقر المزدوج عليه، وفرز الأعمدة بالنقر على
+        الرؤوس وصفوف متناوبة الألوان ككل جداول البرنامج"""
+        if not self.require_admin("delete_op"):
+            return
+        win = self.register_window(tk.Toplevel(self))
+        win.title("🗑 سلة المحذوفات")
+        win.geometry("1000x580")
+        win.configure(bg=CARD)
+        win.resizable(False, False)
+        tk.Label(win, text="🗑 سلة المحذوفات", bg=CARD, fg=DARK, font=FT).pack(pady=(14, 2))
+        tk.Label(win, text="كل عملية حُذفت تُنسخ هنا كاملة — تُستعاد بأمر واحد ولا يُحتفظ بآخر 50 فقط",
+                 bg=CARD, fg=GRAY, font=("Segoe UI", 10)).pack(pady=(0, 8))
+        frm, tv = self.mk_tree(win,
+            ["النوع", "المبيع", "السعر", "الكمية", "اسم الصنف", "العميل", "البائع", "من حذفها", "وقت الحذف"],
+            [80, 110, 100, 80, 190, 130, 100, 110, 150])
+        frm.pack(fill="both", expand=True, padx=18, pady=6)
+        tv.tag_configure("ret", foreground=RED)
+        # ★ إضافة (الإصدار 14 — البندان 5+6): فرز الرؤوس + الصفوف المتناوبة
+        enable_tree_sorting(tv)
+        config_tree_stripes(tv)
+        lbl_empty = tk.Label(win, text="", bg=CARD, fg=GRAY, font=("Segoe UI", 10, "bold"))
+        lbl_empty.pack(pady=(2, 0))
+        lbl_count = tk.Label(win, text="", bg=CARD, fg=GRAY, font=("Segoe UI", 10))
+        lbl_count.pack(pady=(2, 0))
+        add_tip(tv, "انقر رأس أي عمود للفرز — والنقر المزدوج على أي صف يستعيده")
+
+        def fill():
+            """قراءة السلة من جديد وملء الجدول من الأحدث"""
+            tv.delete(*tv.get_children())
+            rows = recycle_list()
+            for i, r in enumerate(rows):
+                tv.insert("", "end", iid=str(r["id"]), tags=stripe_tags(i, r["type"] == "مرتجع"),
+                    values=(r["type"], money(r["total"]), money(r["price"]), f'{r["quantity"]:g}',
+                            r["item_name"], (r["customer_name"] or ""),
+                            (r["seller_name"] or "—"), (r["deleted_by"] or "—"), r["deleted_at"]))
+            lbl_count.config(text=f"عدد الصفوف: {len(rows)} — يُحتفظ بآخر 50 فقط (الأقدم يُحذف تلقائياً)")
+            lbl_empty.config(text=("السلة فارغة الآن — لا عمليات محذوفة" if not rows else ""))
+        fill()
+
+        def restore_selected(_e=None):
+            """استعادة الصف المحدد — رسالة تأكيد تعرض بياناته قبل التنفيذ"""
+            sel = tv.selection()
+            if not sel:
+                messagebox.showinfo("تنبيه", "اختر صفًا من السلة أولاً", parent=win)
+                return
+            rec_id = int(sel[0])
+            with connect() as conn:
+                row = conn.execute("SELECT * FROM deleted_operations WHERE id=?",
+                                   (rec_id,)).fetchone()
+            if row is None:
+                fill()      # حُذف من السلة في الأثناء — تحديث العرض
+                return
+            if not messagebox.askyesno("تأكيد الاستعادة",
+                    f"استعادة هذه العملية إلى جدول العمليات؟\n\n"
+                    f"الصنف: {row['item_name']}\n"
+                    f"{row['quantity']:g} × {money(row['price'])} = {money(row['total'])} ({row['type']})\n"
+                    f"حُذفت بواسطة: {row['deleted_by'] or '—'} في {row['deleted_at']}",
+                    parent=win):
+                return
+            ok, err = recycle_restore(rec_id)
+            if not ok:
+                messagebox.showerror("لا يمكن الاستعادة", err, parent=win)
+                return
+            audit("استعادة عملية", f"رقم {row['op_id']} — {row['item_name']} — {money(row['total'])}")
+            fill()
+            self.refresh_today(); self.refresh_stats()
+            self.lbl_status.config(text="♻️ تمت استعادة العملية المحذوفة — جدول العمليات تحدّث", fg=GREEN)
+
+        tv.bind("<Double-1>", restore_selected)
+        fr_btns = tk.Frame(win, bg=CARD)
+        fr_btns.pack(pady=(4, 12))
+        b_res = self.mk_btn(fr_btns, "♻️ استعادة المحدد", restore_selected, "#0d9488")
+        b_res.pack(side="right", padx=6)
+        add_tip(b_res, "إعادة الصف المحدد إلى جدول العمليات بنفس بياناته الأصلية كاملة")
+        b_ref = self.mk_btn(fr_btns, "🔄 تحديث", fill, "#475569")
+        b_ref.pack(side="right", padx=6)
+        add_tip(b_ref, "إعادة قراءة سلة المحذوفات من جديد")
+        b_close = self.mk_btn(fr_btns, "إغلاق", win.destroy, "#475569")
+        b_close.pack(side="right", padx=6)
+        add_tip(b_close, "إغلاق نافذة سلة المحذوفات")
 
     def close_day(self):
         # ★ تعديل مصرح به (إصدار 8 — الميزة 5): صلاحية «إغلاق اليوم» بدل «المدير فقط»
         if not self.require_admin("close_day"):
             return
-        d = today_str()
+        # ★ تعديل مصرح به (الإصدار 14 — الجزء الأول): الإغلاق يطابق يوم العمل
+        # المفتوح [التاريخ] لا تاريخ الجهاز — المنطق نفسه انتقل كما هو إلى
+        # _close_business_day لخدمة الإغلاق من زر اليوم ومن تبديل اليوم عند
+        # الإقلاع معاً، وبعد الإغلاق يُسأل «بدء يوم عمل جديد؟»
+        d = business_day_open()
+        if not d:
+            messagebox.showinfo("لا يوم عمل مفتوح",
+                "لا يوم عمل مفتوح — ابدأ يوماً جديداً بزر «▶️ بدء يوم جديد»")
+            return
+        self._close_business_day(d, ask_start=True)
+
+    # ★ إضافة (الإصدار 14 — الجزء الأول): جوهر الإغلاق الحالي نفسه بمعامل
+    # التاريخ — يغلق أي يوم عمل مفتوح (اليوم أو يوم أمس بعد منتصف الليل)
+    # بنفس الملخص والتأكيد والنسخ الاحتياطي والطباعة حرفياً كما كان
+    def _close_business_day(self, d, ask_start=True):
         if is_closed(d):
-            messagebox.showinfo("مغلق", "تم إغلاق اليوم مسبقاً"); return
+            messagebox.showinfo("مغلق", "تم إغلاق اليوم مسبقاً"); return False
         # ★ تعديل (إصدار 5 — نظام الأنواع الثلاثة): day_totals ترجع الآن
         # (عدد العمليات، نقداً، شبكة، المرتجعات، الإجمالي)
         n, cash, netw, rets, net = day_totals(d)
         if n == 0 and not messagebox.askyesno("تأكيد", "لا توجد عمليات اليوم.\nهل تريد إغلاق اليوم بتقرير فارغ؟"):
-            return
+            return False
         # ★ تعديل (إصدار 5): الملخص قبل الإغلاق يعرض نقداً وشبكة منفصلين
         # حتى يطابق المدير الدرج النقدي وكشف جهاز الشبكة قبل القفل
         msg = (f"ملخص يوم {d}:\n\nعدد العمليات: {n}\nنقداً: {money(cash)}\n"
@@ -2701,7 +3253,7 @@ class App(tk.Tk):
                "سيُحفظ التقرير في الأرشيف ولا يمكن إضافة عمليات على هذا اليوم.\n"
                "✔ تأكد من مطابقة الدرج النقدي وكشف جهاز الشبكة قبل المتابعة.\nهل تريد المتابعة؟")
         if not messagebox.askyesno("إغلاق اليوم", msg):
-            return
+            return False
         with connect() as conn:
             # ★ تعديل (إصدار 5): حفظ total_cash و total_network منفصلين
             # في تقرير اليوم مع total_sales = نقداً + شبكة
@@ -2712,6 +3264,12 @@ class App(tk.Tk):
                           datetime.now().strftime("%Y-%m-%d %H:%M")))
         audit("إغلاق يوم", f"{d}: {n} عملية — نقداً {money(cash)} | شبكة {money(netw)} | "
               f"مرتجعات {money(rets)} | إجمالي {money(net)}")
+        # ★ إضافة (الإصدار 14 — الجزء الأول): إغلاق يوم العمل = لا يوم مفتوح
+        # الآن (حتى يُبدأ يوم جديد أو يُرفض فيبقى الحفظ معطلاً بزر البدء البديل)
+        try:
+            del_setting(BDAY_KEY)
+        except Exception:
+            pass
         # ★ إضافة (إصدار 7 — طبقات الحماية 1+2+3): النسخ الاحتياطي التلقائي
         # بعد حفظ الإغلاق مباشرة — نسخة يومية (آخر 30) + شهرية أول إغلاق في
         # الشهر (لا تُحذف أبداً) وتُنسخان إلى المجلد الخارجي إن كان مختاراً —
@@ -2731,6 +3289,12 @@ class App(tk.Tk):
                 "تم إغلاق اليوم وحفظ تقريره بنجاح ✅\n"
                 "لكن فشل النسخ الاحتياطي التلقائي (سُجل في error_log.txt).")
         self.refresh_today(); self.update_closed_banner(); self.refresh_stats()
+        # ★ إضافة (الإصدار 14 — الجزء الأول): تحديث جدول الأرشيف أيضاً — اليوم
+        # المغلق يظهر فيه فوراً (كان ينتظر تحديثاً يدوياً أو اختياراً آخر)
+        try:
+            self.refresh_archive()
+        except Exception:
+            pass
         if messagebox.askyesno("تم", "تم حفظ تقرير اليوم بنجاح ✅\nهل تريد عرض التقرير الآن؟"):
             self.open_day_details(d)
         # ★ إضافة (إصدار 6 — ربط الطباعة بالإغلاق): بعد حفظ تقرير اليوم بنجاح —
@@ -2745,6 +3309,231 @@ class App(tk.Tk):
                 self.print_day_report(d, closer=CURRENT_USER["name"], when="بعد الإغلاق")
         except Exception as e:
             log_error(e, sys.exc_info()[2])
+        # ★ إضافة (الإصدار 14 — الجزء الأول): بعد نجاح الإغلاق — «بدء يوم عمل
+        # جديد؟» بالرفض لا يوم مفتوح فيبقى الحفظ معطلاً ويحل زر «▶️ بدء يوم
+        # جديد» محل زر الإغلاق حتى يبدأه المستخدم
+        if ask_start:
+            self.ask_start_new_business_day()
+        return True
+
+    # ═══════════════════════════════════════════════════════
+    # ★★★ إضافات (الإصدار 14 — الجزء الأول): دوال يوم العمل 🌙 ★★★
+    # الفحص الذكي عند الإقلاع + بدء يوم جديد + نافذة التاريخ اليدوي +
+    # تحديث كل عناصر الواجهة التي تتبع يوم العمل
+    # ═══════════════════════════════════════════════════════
+    def business_day_startup_check(self):
+        """★ إضافة (الإصدار 14 — الجزء الأول): الفحص الذكي ليوم العمل بعد
+        الدخول مباشرة (مرة واحدة عند الإقلاع فقط — لا يُسأل عند كل حفظ):
+        — يوم العمل = اليوم → دخول صامت بلا أي سؤال
+        — يوم العمل أقدم من اليوم → ثلاثة خيارات: إغلاقه الآن كتقرير
+          (بالملخص الكامل القائم ثم سؤال بدء يوم جديد [اليوم]) / الاستمرار
+          عليه بعد منتصف الليل (العمليات تُسجَّل على تاريخه) / إلغاء الدخول
+        — لا يوم مخزن → قاعدة جديدة تماماً: يُفتح اليوم بصمت (توافق كامل
+          مع الإصدارات السابقة)، أو قاعدة قائمة: سؤال بدء يوم جديد [اليوم]
+          مع خيار تعديل التاريخ يدوياً"""
+        stored = business_day_open()
+        today = today_str()
+        if stored is None:
+            with connect() as conn:
+                has_ops = conn.execute("SELECT 1 FROM operations LIMIT 1").fetchone() is not None
+                has_reps = conn.execute("SELECT 1 FROM daily_reports LIMIT 1").fetchone() is not None
+            if not has_ops and not has_reps:
+                set_business_day(today)   # أول تشغيل فعلاً — بلا أي سؤال
+                return
+            self.ask_start_new_business_day(manual=True)
+            return
+        if stored == today or stored > today:
+            return          # نفس اليوم (أو ساعة الجهاز متأخرة) — دخول صامت
+        # يوم العمل أقدم من اليوم — إن كان مغلقاً فعلاً فالسؤال بدء يوم جديد مباشرة
+        if is_closed(stored):
+            try:
+                del_setting(BDAY_KEY)
+            except Exception:
+                pass
+            self.ask_start_new_business_day(manual=True)
+            return
+        choice = self._ask_bday_switch(stored, today)
+        if choice == "close":
+            self._close_business_day(stored, ask_start=True)
+        elif choice == "continue":
+            audit("استمرار يوم عمل", f"{stored} — العمليات بعد منتصف الليل تُسجَّل عليه")
+            # يبقى اليوم القديم مفتوحاً — البيع بعد منتصف الليل يُسجَّل عليه
+        else:
+            self.exit_app()          # إلغاء الدخول — إغلاق آمن كما عند إلغاء الدخول نفسه
+
+    def _ask_bday_switch(self, stored, today):
+        """★ إضافة (الإصدار 14 — الجزء الأول): حوار الخيارات الثلاثة ليوم العمل
+        الأقدم من اليوم — يرجع 'close' أو 'continue' أو 'cancel'"""
+        box = {"choice": "cancel"}
+        win = self.register_window(tk.Toplevel(self))
+        win.title("يوم العمل المفتوح")
+        W, H = 500, 330
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+        win.geometry(f"{W}x{H}+{max((sw - W) // 2, 0)}+{max((sh - H) // 2 - 30, 0)}")
+        win.resizable(False, False)
+        win.configure(bg=BG)
+        win.transient(self)
+        try:
+            win.grab_set()
+        except Exception:
+            pass
+        card = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+        card.place(in_=win, relx=0.5, rely=0.5, anchor="c", width=440, height=270)
+        tk.Label(card, text="🌙", bg=CARD, fg=DARK, font=("Segoe UI", 24)).pack(pady=(14, 0))
+        tk.Label(card, text="يوم العمل المفتوح أقدم من تاريخ اليوم", bg=CARD, fg=DARK,
+                 font=FT).pack(pady=(0, 6))
+        tk.Label(card, text=(f"يوم العمل المفتوح: {stored} ({day_name(stored)})\n"
+                             f"تاريخ الجهاز اليوم: {today}\n\nماذا تريد أن تفعل؟"),
+                 bg=CARD, fg=GRAY, font=("Segoe UI", 10), justify="center").pack(pady=(0, 8))
+        def pick(c):
+            box["choice"] = c
+            win.destroy()
+        fr = tk.Frame(card, bg=CARD); fr.pack(pady=4)
+        self.mk_btn(fr, "🔒 إغلاقه الآن كتقرير", lambda: pick("close"), ORANGE).pack(
+            side="top", pady=4, ipadx=10)
+        self.mk_btn(fr, "🌙 الاستمرار عليه (بعد منتصف الليل)", lambda: pick("continue"), ACCENT).pack(
+            side="top", pady=4, ipadx=10)
+        self.mk_btn(fr, "✖ إلغاء الدخول", lambda: pick("cancel"), "#475569").pack(
+            side="top", pady=4, ipadx=10)
+        win.protocol("WM_DELETE_WINDOW", lambda: pick("cancel"))
+        win.wait_window(win)
+        return box["choice"]
+
+    def ask_start_new_business_day(self, manual=False):
+        """★ إضافة (الإصدار 14 — الجزء الأول): سؤال بدء يوم عمل جديد —
+        التاريخ المقترح = اليوم، وإن كان اليوم مغلقاً بالأرشيف فاليوم التالي
+        له؛ manual=True يفتح نافذة التاريخ اليدوي (بعد الإغلاق مباشرة أو عند
+        الإقلاع بلا يوم مخزن)، ويرجع True إن صار يوم مفتوح"""
+        propose = today_str()
+        if is_closed(propose):
+            propose = next_day(propose)
+        if manual:
+            d = self.manual_business_day_dialog(propose)
+            if d:
+                set_business_day(d)
+                self.refresh_business_day_ui()
+                messagebox.showinfo("يوم عمل جديد", f"فُتح يوم عمل جديد بتاريخ {d}\n"
+                                     "يمكنك الآن حفظ العمليات بشكل طبيعي.")
+                return True
+            return False
+        if messagebox.askyesno("بدء يوم عمل جديد",
+                               f"هل تريد بدء يوم عمل جديد بتاريخ {propose}؟"):
+            ok, v = validate_new_business_day(propose)
+            if ok:
+                set_business_day(v)
+                self.refresh_business_day_ui()
+                messagebox.showinfo("يوم عمل جديد", f"فُتح يوم عمل جديد بتاريخ {v}\n"
+                                     "يمكنك الآن حفظ العمليات بشكل طبيعي.")
+                return True
+            messagebox.showwarning("تنبيه", v)
+        return False
+
+    def manual_business_day_dialog(self, propose=""):
+        """★ إضافة (الإصدار 14 — الجزء الأول): نافذة بدء يوم عمل بتاريخ يدوي —
+        مقترح جاهز قابل للتعديل (بعد الإغلاق مباشرة أو عند الإقلاع بلا يوم
+        مخزن)، وتحكم كامل: صيغة سليمة + ليس يوماً مغلقاً + ليس أقدم من آخر
+        يوم مغلق؛ يرجع التاريخ أو None عند الإلغاء"""
+        result = {"d": None}
+        win = self.register_window(tk.Toplevel(self))
+        win.title("بدء يوم عمل جديد")
+        W, H = 440, 300
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+        win.geometry(f"{W}x{H}+{max((sw - W) // 2, 0)}+{max((sh - H) // 2 - 30, 0)}")
+        win.resizable(False, False)
+        win.configure(bg=BG)
+        win.transient(self)
+        try:
+            win.grab_set()
+        except Exception:
+            pass
+        card = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+        card.place(in_=win, relx=0.5, rely=0.5, anchor="c", width=390, height=250)
+        tk.Label(card, text="▶️", bg=CARD, fg=DARK, font=("Segoe UI", 24)).pack(pady=(12, 0))
+        tk.Label(card, text="بدء يوم عمل جديد", bg=CARD, fg=DARK, font=FT).pack(pady=(0, 4))
+        tk.Label(card, text="تاريخ يوم العمل الذي ستُسجَّل عليه العمليات:", bg=CARD, fg=GRAY,
+                 font=("Segoe UI", 10)).pack()
+        e_date = tk.Entry(card, font=F, justify="center", relief="solid", bd=1, width=18)
+        e_date.pack(pady=6, ipady=4)
+        e_date.insert(0, propose)
+        tk.Label(card, text="الصيغ المقبولة: 2026-01-10 أو 10-01-2026 أو 10/01/2026\n"
+                            "(بالأرقام العربية أيضاً) — وليس يوماً مغلقاً في الأرشيف",
+                 bg=CARD, fg=GRAY, font=("Segoe UI", 9), justify="center").pack()
+        lbl_err = tk.Label(card, text="", bg=CARD, fg=RED, font=("Segoe UI", 9, "bold"),
+                           wraplength=340, justify="center")
+        lbl_err.pack(pady=(2, 0))
+        def do_ok():
+            ok, v = validate_new_business_day(e_date.get())
+            if not ok:
+                lbl_err.config(text=v)
+                shake_widget(card)
+                return
+            result["d"] = v
+            win.destroy()
+        def do_cancel():
+            win.destroy()
+        fr = tk.Frame(card, bg=CARD); fr.pack(pady=(6, 10))
+        self.mk_btn(fr, "✅ بدء اليوم", do_ok, GREEN).pack(side="right", padx=6)
+        self.mk_btn(fr, "إلغاء", do_cancel, "#475569").pack(side="right", padx=6)
+        e_date.bind("<Return>", lambda _e: do_ok())
+        e_date.focus_set()
+        win.protocol("WM_DELETE_WINDOW", do_cancel)
+        win.wait_window(win)
+        return result["d"]
+
+    def start_new_business_day(self):
+        """★ إضافة (الإصدار 14 — الجزء الأول): زر «▶️ بدء يوم جديد» — يفتح
+        نافذة التاريخ (مقترحاً اليوم أو اليوم التالي إن كان اليوم مغلقاً)
+        لمن يملك صلاحية إغلاق اليوم"""
+        if not self.require_admin("close_day"):
+            return
+        self.ask_start_new_business_day(manual=True)
+
+    def refresh_business_day_ui(self):
+        """★ إضافة (الإصدار 14 — الجزء الأول): تحديث كل عناصر الواجهة التي
+        تتبع يوم العمل — سطر الشريط العلوي (والهلال بعد منتصف الليل)، عنوان
+        صفحة العمليات بتاريخه، وتبديل زر الإغلاق بزر البدء وبالعكس"""
+        d = business_day_open()
+        if hasattr(self, "lbl_bday"):
+            if d:
+                extra = "  🌙 بعد منتصف الليل" if today_str() > d else ""
+                self.lbl_bday.config(text=f"📅 يوم العمل: {d} ({day_name(d)}){extra}",
+                                     fg="#1d4ed8")
+            else:
+                self.lbl_bday.config(
+                    text="📅 لا يوم عمل مفتوح — الحفظ معطل حتى بدء يوم جديد", fg=RED)
+        if hasattr(self, "lbl_today_title"):
+            self.lbl_today_title.config(
+                text=(f"📋 عمليات يوم العمل {d} ({day_name(d)})" if d
+                      else "📋 عمليات يوم العمل"))
+        if hasattr(self, "btn_close") and hasattr(self, "btn_start_day"):
+            try:
+                def _packed(w):
+                    try:
+                        w.pack_info(); return True
+                    except Exception:
+                        return False
+                if d:
+                    self.btn_start_day.pack_forget()
+                    # ★ إضافة (الإصدار 14 — الجزء الأول): الحالة تُطبَّع هنا أيضاً —
+                    # بعد بدء يوم جديد مباشرة كان زر الإغلاق قد يظل معطلاً من
+                    # إغلاق اليوم السابق حتى تحديث لاحق (لاحظ 3058 و3010)
+                    self.btn_close.config(
+                        state=("disabled" if is_closed(d) else "normal"))
+                    if not _packed(self.btn_close):
+                        self.btn_close.pack(side="left", padx=6)
+                else:
+                    self.btn_close.pack_forget()
+                    if not _packed(self.btn_start_day):
+                        self.btn_start_day.pack(side="left", padx=6)
+            except Exception:
+                pass
+        # ★ إضافة (الإصدار 14 — الجزء الأول): لافتة صفحة العملية تتبع يوم
+        # العمل أيضاً — بعد بدء يوم جديد مباشرة كانت تبقى نصها السابق
+        try:
+            if hasattr(self, "banner_closed"):
+                self.update_closed_banner()
+        except Exception:
+            pass
 
     # ---------- الأرشيف ----------
     def build_archive_page(self, p):
@@ -2774,6 +3563,9 @@ class App(tk.Tk):
             [130, 110, 110, 105, 105, 95, 100])
         frm.pack(fill="both", expand=True, padx=25, pady=8)
         self.tv_arch.bind("<Double-1>", lambda e: self.open_selected_day())
+        # ★ إضافة (الإصدار 14 — الجزء الثاني): فرز أعمدة الأرشيف + صفوف متناوبة
+        enable_tree_sorting(self.tv_arch)
+        config_tree_stripes(self.tv_arch)
 
         # ★ إضافة (ميزة 4): سطر الإجمالي التراكمي للأيام المعروضة
         self.lbl_arch_summary = tk.Label(p, text="", bg=BG, fg=ACCENT, font=FB)
@@ -2821,12 +3613,13 @@ class App(tk.Tk):
         self.tv_arch.delete(*self.tv_arch.get_children())
         with connect() as conn:
             rows = conn.execute("SELECT * FROM daily_reports ORDER BY report_date DESC").fetchall()
-        for r in rows:
+        for i, r in enumerate(rows):
             # ★ تعديل (إصدار 5): القيم تشمل نقداً وشبكة منفصلين
-            self.tv_arch.insert("", "end", iid=r["report_date"], values=(
-                r["closed_at"], money(r["net_total"]), money(r["total_returns"]),
-                money(r["total_network"] or 0), money(r["total_cash"] or 0),
-                r["ops_count"], r["report_date"]))
+            # ★ إضافة (الإصدار 14 — البند 6): شارة الصف المتناوب
+            self.tv_arch.insert("", "end", iid=r["report_date"], tags=stripe_tags(i),
+                values=(r["closed_at"], money(r["net_total"]), money(r["total_returns"]),
+                        money(r["total_network"] or 0), money(r["total_cash"] or 0),
+                        r["ops_count"], r["report_date"]))
         self.update_arch_summary(rows)   # ★ إضافة (ميزة 4): تحديث الإجمالي التراكمي
 
     def open_selected_day(self):
@@ -2839,9 +3632,11 @@ class App(tk.Tk):
         with connect() as conn:
             rep = conn.execute("SELECT * FROM daily_reports WHERE report_date=?", (d,)).fetchone()
             # ★ تعديل ضروري معلن (إصدار 3 — ميزة 4): البائع يرى عملياته فقط في تفاصيل اليوم
+            # ★ تعديل مصرح به (الإصدار 14 — الجزء صفر): الأدمن كالمدير — يرى كل
+            # العمليات (كان الفحص «مدير» وحده فكان الأدمن يرى عملياته فقط)
             q = "SELECT * FROM operations WHERE date=?"
             params = [d]
-            if self.role != "مدير":
+            if not manager_level(self.role):
                 q += " AND seller_name=?"
                 params.append(self.user_name)
             q += " ORDER BY id"
@@ -2855,7 +3650,9 @@ class App(tk.Tk):
         win.geometry("1010x560"); win.configure(bg=BG)   # ★ (إصدار 3): توسعة بسيطة لاستيعاب عمود البائع
         tk.Label(win, text=f"📄 تقرير يوم {d}  ({day_name(d)})", bg=BG, fg=DARK, font=FT).pack(pady=12)
         # ★ إضافة (إصدار 3 — ميزة 4): ملاحظة للبائع أنه يرى عملياته فقط
-        if self.role != "مدير":
+        # ★ تعديل مصرح به (الإصدار 14 — الجزء صفر): الملاحظة للبائع فقط —
+        # المدير والأدمن كلاهما يرى كل العمليات
+        if not manager_level(self.role):
             tk.Label(win, text="تُعرض عملياتك فقط", bg=BG, fg=GRAY,
                      font=("Segoe UI", 10, "bold")).pack()
 
@@ -2953,9 +3750,11 @@ class App(tk.Tk):
         with connect() as conn:
             rep = conn.execute("SELECT * FROM daily_reports WHERE report_date=?", (d,)).fetchone()
             # ★ تعديل ضروري معلن (إصدار 3 — ميزة 4): البائع يصدّر عملياته فقط من تفاصيل اليوم
+            # ★ تعديل مصرح به (الإصدار 14 — الجزء صفر): الأدمن كالمدير — يصدّر
+            # كل عمليات اليوم (كان الفحص «مدير» وحده)
             q = "SELECT * FROM operations WHERE date=?"
             params = [d]
-            if self.role != "مدير":
+            if not manager_level(self.role):
                 q += " AND seller_name=?"
                 params.append(self.user_name)
             q += " ORDER BY id"
@@ -2970,12 +3769,27 @@ class App(tk.Tk):
         if not sel:
             messagebox.showinfo("تنبيه", "اختر يوماً من الجدول أولاً"); return
         d = sel[0]
+        # ★ إضافة (الإصدار 14 — الجزء الأول): يوم آخر مفتوح حالياً؟ — يُمنع
+        # الاستبدال حماية لأعماله غير المُغلقة (يُغلق أولاً ثم يُعاد فتح هذا
+        # اليوم)، والفحص قبل حذف التقرير كي لا يُترك يوماً بلا تقرير بلا داعٍ
+        cur = business_day_open()
+        if cur and cur != d:
+            messagebox.showwarning("لا يمكن إعادة الفتح",
+                f"يوم عمل آخر مفتوح حالياً ({cur}) ولم تُغلق أعماله بعد.\n"
+                f"أغلقه أولاً ثم أعد فتح يوم {d}.")
+            return
         if not messagebox.askyesno("تأكيد", f"إعادة فتح يوم {d} سيحذف تقريره النهائي (تبقى العمليات).\nهل تريد المتابعة؟"):
             return
         with connect() as conn:
             conn.execute("DELETE FROM daily_reports WHERE report_date=?", (d,))
         audit("إعادة فتح يوم", d)               # ★ إضافة (ميزة 2): تسجيل إعادة الفتح
-        self.refresh_archive(); self.refresh_today(); self.update_closed_banner(); self.refresh_stats()
+        # ★ إضافة (الإصدار 14 — الجزء الأول): اليوم المُعاد فتحه يصبح يوم العمل
+        # المفتوح من جديد — بدونه كان الحفظ يبقى معطلاً بعد إعادة الفتح رغم
+        # حذف التقرير، ووعد «يمكنك إضافة عمليات عليه ثم إغلاقه مرة أخرى»
+        # يتحقق الآن فعلاً
+        set_business_day(d)
+        self.refresh_archive(); self.refresh_today(); self.update_closed_banner()
+        self.refresh_stats(); self.refresh_business_day_ui()
         messagebox.showinfo("تم", f"أصبح يوم {d} مفتوحاً من جديد.\nيمكنك إضافة عمليات عليه ثم إغلاقه مرة أخرى.")
 
     def show_archive_menu(self):
@@ -3046,7 +3860,9 @@ class App(tk.Tk):
         # ★ إضافة (إصدار 3 — ميزة 4): البائع يبحث في عملياته فقط
         self.lbl_search_only = tk.Label(p, text="تُعرض عملياتك فقط", bg=BG, fg=GRAY,
                                         font=("Segoe UI", 10, "bold"))
-        if self.role != "مدير":
+        # ★ تعديل مصرح به (الإصدار 14 — الجزء صفر): الملاحظة للبائع فقط —
+        # المدير والأدمن كلاهما يبحث في كل العمليات
+        if not manager_level(self.role):
             self.lbl_search_only.pack(fill="x", padx=25, anchor="e")
 
         self.lbl_search = tk.Label(p, text="", bg=BG, fg=ACCENT, font=FB)
@@ -3058,6 +3874,9 @@ class App(tk.Tk):
             [80, 110, 100, 80, 190, 130, 100, 100])
         frm.pack(fill="both", expand=True, padx=25, pady=8)
         self.tv_search.tag_configure("ret", foreground=RED)
+        # ★ إضافة (الإصدار 14 — البندان 5+6): فرز الرؤوس + الصفوف المتناوبة
+        enable_tree_sorting(self.tv_search)
+        config_tree_stripes(self.tv_search)
 
     def do_search(self):
         q = self.e_search.get().strip()
@@ -3065,18 +3884,21 @@ class App(tk.Tk):
             return
         self.tv_search.delete(*self.tv_search.get_children())
         # ★ تعديل ضروري معلن (إصدار 3 — ميزة 4): البائع يجد في عملياته فقط
+        # ★ تعديل مصرح به (الإصدار 14 — الجزء صفر): الأدمن كالمدير — يجد في
+        # كل العمليات (كان الفحص «مدير» وحده فكان الأدمن يجد عملياته فقط)
         sql = "SELECT * FROM operations WHERE item_name LIKE ?"
         params = [f"%{q}%"]
-        if self.role != "مدير":
+        if not manager_level(self.role):
             sql += " AND seller_name=?"
             params.append(self.user_name)
         sql += " ORDER BY date DESC, id DESC"
         with connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         total = 0
-        for r in rows:
+        for i, r in enumerate(rows):
             total += r["total"]
-            self.tv_search.insert("", "end", tags=(("ret",) if r["type"] == "مرتجع" else ()),
+            # ★ إضافة (الإصدار 14 — البندان 5+6): شارة الصف المتناوب مع بقاء المرتجع أحمر
+            self.tv_search.insert("", "end", tags=stripe_tags(i, r["type"] == "مرتجع"),
                 values=(r["type"], money(r["total"]), money(r["price"]),
                         f'{r["quantity"]:g}', r["item_name"],
                         (r["customer_name"] or ""),
@@ -3111,7 +3933,9 @@ class App(tk.Tk):
     # التعديلات فوراً حتى أثناء الجلسة)، والصلاحية الخاصة «manager» معناها:
     # للمدير فقط (مثل شاشة إدارة المستخدمين)
     def has_permission(self, key):
-        if self.role == "مدير":
+        # ★ تعديل مصرح به (الإصدار 14 — الجزء صفر): الأدمن يملك كل صلاحيات
+        # المدير تلقائياً — أضيف لدوره إلى شرط المدير (كان المدير وحده)
+        if manager_level(self.role):
             return True
         if key == "manager":
             return False
@@ -3196,6 +4020,11 @@ class App(tk.Tk):
         i_p = frow("السعر:")
         self.e_inv_price = tk.Entry(i_p, font=F, justify="center", relief="solid", bd=1, width=30)
         self.e_inv_price.pack(side="right", ipady=4)
+        # ★ إضافة (الإصدار 14 — البند 13): فلترة إدخال الكمية/السعر في شاشة
+        # الفاتورة — أرقام فقط (عربية/إنجليزية وفاصلة الكسر) كحقلي شاشة
+        # «عملية جديدة» نفسها — أي حرف آخر لا يُكتب أصلاً
+        digits_only_filter(self.e_inv_qty)
+        digits_only_filter(self.e_inv_price)
 
         trow = tk.Frame(form, bg=CARD); trow.pack(fill="x", padx=22, pady=8)
         tk.Label(trow, text="النوع:", bg=CARD, fg=DARK, font=FB).pack(side="right")
@@ -3389,6 +4218,9 @@ class App(tk.Tk):
         # (كل من حفظ فاتورة مثلاً) — فلترة عرضية في الذاكرة فقط
         self.tv_audit.bind("<ButtonRelease-1>", self.on_audit_click)
         add_tip(self.tv_audit, "انقر أي صف للفلترة حسب المستخدم — وانقر عمود «الإجراء» للفلترة حسب الإجراء")
+        # ★ إضافة (الإصدار 14 — البندان 5+6): فرز الرؤوس + الصفوف المتناوبة
+        enable_tree_sorting(self.tv_audit)
+        config_tree_stripes(self.tv_audit)
         self.refresh_audit()
 
     def refresh_audit(self):
@@ -3404,8 +4236,9 @@ class App(tk.Tk):
         # وقائمة «الإجراء» المنسدلة تتحدث بأنواع الإجراءات المتاحة
         self.audit_all_rows = rows
         self.update_audit_action_values(rows)
-        for r in rows:
-            self.tv_audit.insert("", "end", values=(r["details"], r["action"], r["username"], r["ts"]))
+        for i, r in enumerate(rows):
+            self.tv_audit.insert("", "end", tags=stripe_tags(i),
+                values=(r["details"], r["action"], r["username"], r["ts"]))
         # ★ إضافة (إصدار 8 — الميزة 1): العرض يمر بالفلتر النشط (إن وُجد)
         self.render_audit()
 
@@ -3434,9 +4267,10 @@ class App(tk.Tk):
             self.lbl_audit_filter.config(
                 text=f"🔍 السجلات: الكل   ({len(rows)} سجلاً)", bg=BG, fg=GRAY)
         self.tv_audit.delete(*self.tv_audit.get_children())
-        for r in rows:
-            self.tv_audit.insert("", "end", values=(r["details"], r["action"],
-                                                    r["username"], r["ts"]))
+        for i, r in enumerate(rows):
+            self.tv_audit.insert("", "end", tags=stripe_tags(i),
+                                  values=(r["details"], r["action"],
+                                          r["username"], r["ts"]))
 
     def on_audit_click(self, event):
         """النقر على صف: فلترة حسب المستخدم — والنقر على عمود «الإجراء»:
@@ -3491,7 +4325,7 @@ class App(tk.Tk):
         e_new = row("كلمة المرور الجديدة:")
         # ★ إضافة (إصدار 9 — الميزة 4): شريط قوة كلمة المرور الجديدة تحت حقلها
         # مباشرة — يتحدث مع كل ضغطة مفتاح (أحمر/برتقالي/أخضر + النص الإرشادي)
-        strength_update = make_strength_bar(card)
+        strength_update = make_strength_bar(card, self.role)   # ★ (الميزة 4) الشريط حسب دور الحساب
         e_new.bind("<KeyRelease>", lambda _e: strength_update(e_new.get()))
         e_con = row("تأكيد الجديدة:")
         # ★ إضافة (إصدار 9 — الميزة 1): زر عين 👁 داخل كل حقل كلمة مرور (على
@@ -3504,11 +4338,10 @@ class App(tk.Tk):
             urow = get_user_row(self.user_name)
             if urow is None or not verify_user_password(urow, cur):
                 messagebox.showerror("خطأ", "كلمة المرور الحالية غير صحيحة", parent=win); return
-            # ★ تعديل مصرح به (إصدار 9 — الميزة 4): منع الحفظ إذا كانت ضعيفة جداً
-            # (أقل من 5 أحرف = أحمر في شريط القوة) برسالة عربية واضحة —
-            # كانت «4 أحرف على الأقل»
-            if pw_is_weak(new):
-                messagebox.showwarning("تنبيه", "كلمة المرور الجديدة ضعيفة جداً — استخدم 5 أحرف على الأقل", parent=win); return
+            # ★ تعديل مصرح به (الإصدار 14 — البند 11): منع الحفظ إذا كانت دون حد
+            # دور هذا الحساب (مدير/أدمن: 6 أحرف وفيها رقم / بائع: 4 أحرف)
+            if pw_is_weak(new, self.role):
+                messagebox.showwarning("تنبيه", pw_role_message(self.role), parent=win); return
             if new != con:
                 messagebox.showwarning("تنبيه", "التأكيد لا يطابق كلمة المرور الجديدة", parent=win); return
             salt = secrets.token_hex(16)
@@ -3542,12 +4375,13 @@ class App(tk.Tk):
         with connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         self.tv_arch.delete(*self.tv_arch.get_children())
-        for r in rows:
+        for i, r in enumerate(rows):
             # ★ تعديل (إصدار 5): القيم تشمل نقداً وشبكة منفصلين
-            self.tv_arch.insert("", "end", iid=r["report_date"], values=(
-                r["closed_at"], money(r["net_total"]), money(r["total_returns"]),
-                money(r["total_network"] or 0), money(r["total_cash"] or 0),
-                r["ops_count"], r["report_date"]))
+            # ★ إضافة (الإصدار 14 — البند 6): شارة الصف المتناوب
+            self.tv_arch.insert("", "end", iid=r["report_date"], tags=stripe_tags(i),
+                values=(r["closed_at"], money(r["net_total"]), money(r["total_returns"]),
+                        money(r["total_network"] or 0), money(r["total_cash"] or 0),
+                        r["ops_count"], r["report_date"]))
         self.update_arch_summary(rows)
 
     def show_all_archive(self):
@@ -3558,15 +4392,17 @@ class App(tk.Tk):
 
     def update_arch_summary(self, rows):
         """★ إضافة (ميزة 4): صف الإجمالي التراكمي لكل الأيام المعروضة حالياً
-        ★ تعديل (إصدار 5 — نظام الأنواع الثلاثة): يعرض نقداً وشبكة منفصلين"""
+        ★ تعديل (إصدار 5 — نظام الأنواع الثلاثة): يعرض نقداً وشبكة منفصلين
+        ★ تعديل مصرح به (الإصدار 14 — البند 8): صيغة العداد الدائم أُضيفت
+        لأول السطر — «اعرض [عدد] صفوف — المجموع الكلي: [الإجمالي]» مع كل تعبئة"""
         n   = len(rows)
         ca  = sum((r["total_cash"] or 0) for r in rows)
         nw  = sum((r["total_network"] or 0) for r in rows)
         rt  = sum((r["total_returns"] or 0) for r in rows)
         net = sum((r["net_total"] or 0) for r in rows)
         self.lbl_arch_summary.config(
-            text=(f"الأيام المعروضة: {n} — نقداً: {money(ca)} — شبكة: {money(nw)} — "
-                  f"المرتجعات: {money(rt)} — الإجمالي التراكمي: {money(net)}" if n else ""),
+            text=(f"اعرض {n} صفوف — المجموع الكلي: {money(net)} — نقداً: {money(ca)} — شبكة: {money(nw)} — "
+                  f"المرتجعات: {money(rt)}" if n else ""),
             fg=(GREEN if net >= 0 else RED))
 
     # ---------- (ميزة 3) تصدير Excel ----------
@@ -3644,6 +4480,9 @@ class App(tk.Tk):
             ["تاريخ الإضافة", "عدد العمليات", "الحالة", "الدور", "اسم المستخدم"],
             [150, 110, 90, 90, 170])
         frm.pack(fill="both", expand=True, padx=25, pady=8)
+        # ★ إضافة (الإصدار 14 — البندان 5+6): فرز الرؤوس + الصفوف المتناوبة
+        enable_tree_sorting(self.tv_users)
+        config_tree_stripes(self.tv_users)
 
         bar2 = tk.Frame(p, bg=BG); bar2.pack(fill="x", padx=25, pady=(0, 18))
         self.mk_btn(bar2, "🚫 إيقاف / تفعيل", self.toggle_user_active, ORANGE).pack(side="left", padx=6)
@@ -3656,6 +4495,11 @@ class App(tk.Tk):
         # ★ تعديل ضروري معلن (إصدار 8 — الميزة 5): الزر أصبح «إضافة مستخدم» لأن
         # النافذة تضيف مديراً أو بائعاً باختيار الدور (كانت لإضافة بائع فقط)
         self.mk_btn(bar2, "➕ إضافة مستخدم", self.add_user_dialog, GREEN).pack(side="right", padx=6)
+        # ★ إضافة (الإصدار 14 — الجزء صفر): قاعدة حساب الأدمن الثابت — لا
+        # يُنشأ من هنا ولا تُغيَّر صلاحياته ولا كلمة مروره ولا يُوقف إلا من
+        # الأدمن نفسه (المدير يرى الحساب في الجدول ولا يستطيع المساس به)
+        tk.Label(p, text="👑 حساب الأدمن (admin) ثابت — لا تُغيَّر صلاحياته ولا كلمة مروره ولا يُوقف إلا من الأدمن نفسه (للأدمن فقط)",
+                 bg=BG, fg=GRAY, font=("Segoe UI", 9)).pack(fill="x", padx=25, pady=(4, 18))
         self.refresh_users()
 
     def refresh_users(self):
@@ -3668,8 +4512,9 @@ class App(tk.Tk):
             rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
             counts = dict((r[0], r[1]) for r in conn.execute(
                 "SELECT seller_name, COUNT(*) FROM operations GROUP BY seller_name"))
-        for r in rows:
-            self.tv_users.insert("", "end", iid=str(r["id"]), values=(
+        for i, r in enumerate(rows):
+            # ★ إضافة (الإصدار 14 — البندان 5+6): شارة الصف المتناوب
+            self.tv_users.insert("", "end", iid=str(r["id"]), tags=stripe_tags(i), values=(
                 r["created_at"], counts.get(r["username"], 0),
                 ("مفعل" if r["active"] else "موقوف"), r["role"], r["username"]))
 
@@ -3698,6 +4543,10 @@ class App(tk.Tk):
         e_name = row("اسم المستخدم:")
         e_pwd  = row("كلمة المرور:", "•")
         e_con  = row("تأكيد كلمة المرور:", "•")
+        # ★ إضافة (الإصدار 14 — البند 11): شريط قوة كلمة المرور حسب الدور —
+        # المعايير تتبدل فوراً عند تغيير الدور المختار (بائع/مدير)
+        strength_update = make_strength_bar(card)
+        e_pwd.bind("<KeyRelease>", lambda _e: strength_update(e_pwd.get(), cb_role.get()))
 
         # ★ إضافة (إصدار 8 — الميزة 5): اختيار الدور (مدير/بائع) + صندوق
         # الصلاحيات العشر — البائع الافتراضي: «إضافة عمليات وفواتير» فقط،
@@ -3747,8 +4596,10 @@ class App(tk.Tk):
                 messagebox.showwarning("تنبيه", "اكتب اسم المستخدم أولاً", parent=win); return
             if get_user_row(name) is not None:
                 messagebox.showwarning("تنبيه", "اسم المستخدم موجود مسبقاً — اختر اسماً آخر", parent=win); return
-            if len(p1) < 4:
-                messagebox.showwarning("تنبيه", "كلمة المرور قصيرة جداً (4 أحرف على الأقل)", parent=win); return
+            # ★ تعديل مصرح به (الإصدار 14 — البند 11): الحد الأدنى حسب الدور
+            # المختار — مدير: 6 أحرف وفيها رقم / بائع: 4 أحرف
+            if not pw_role_ok(p1, cb_role.get()):
+                messagebox.showwarning("تنبيه", pw_role_message(cb_role.get()), parent=win); return
             if p1 != p2:
                 messagebox.showwarning("تنبيه", "التأكيد لا يطابق كلمة المرور", parent=win); return
             # ★ تعديل ضروري معلن (إصدار 8 — الميزة 5): الحفظ يشمل الدور المختار
@@ -3789,6 +4640,13 @@ class App(tk.Tk):
             urow = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
         if urow is None:
             return
+        # ★ إضافة (الإصدار 14 — الجزء صفر): حماية حساب الأدمن — لا تُغيَّر
+        # صلاحياته إلا من الأدمن نفسه (وهو يملك كل شيء دائماً أصلاً)
+        if is_admin_user(urow["username"]) and not is_admin_user(self.user_name):
+            messagebox.showwarning("ممنوع",
+                f"المستخدم «{urow['username']}» أدمن — لا يمكن تنفيذ الإجراء عليه "
+                "إلا من الأدمن نفسه")
+            return
         # ★ إضافة (إصدار 8 — الميزة 3): تسجيل النافذة في التتبع المركزي
         win = self.register_window(tk.Toplevel(self))
         win.title("تعديل الصلاحيات")
@@ -3798,7 +4656,9 @@ class App(tk.Tk):
         tk.Label(card, text="✏️ تعديل الصلاحيات", bg=CARD, fg=DARK, font=FT).pack(pady=(14, 2))
         tk.Label(card, text=f"المستخدم: {urow['username']} ({urow['role']})",
                  bg=CARD, fg=GRAY, font=("Segoe UI", 10)).pack(pady=(0, 8))
-        is_mgr = (urow["role"] == "مدير")
+        # ★ تعديل مصرح به (الإصدار 14 — الجزء صفر): المدير والأدمن معاً —
+        # كلاهما يملك كل الصلاحيات دائماً (مربعاته مقفلة)
+        is_mgr = manager_level(urow["role"])
         old_perms = load_user_permissions(urow["username"])
         perm_vars, perm_cbs = {}, {}
         for key, label in PERMISSIONS:
@@ -3812,14 +4672,15 @@ class App(tk.Tk):
                 cb.config(state="disabled")
             perm_vars[key] = v
             perm_cbs[key] = cb
-        tk.Label(card, text=("🔒 هذا الحساب مدير — يملك كل الصلاحيات دائماً (مقفلة)" if is_mgr
+        tk.Label(card, text=(f"🔒 هذا الحساب {urow['role']} — يملك كل الصلاحيات دائماً (مقفلة)" if is_mgr
                              else "فعّل ما تريد منحه وألغِ ما تريد سحبه — كل تغيير يُسجل في سجل التدقيق"),
                  bg=CARD, fg=GRAY, font=("Segoe UI", 9)).pack(pady=(6, 0))
 
         def do_save_perms():
             new_perms = [k for k, v in perm_vars.items() if v.get()]
             if is_mgr:
-                messagebox.showinfo("تنبيه", "المدير يملك كل الصلاحيات دائماً", parent=win)
+                messagebox.showinfo("تنبيه",
+                    f"هذا الحساب {urow['role']} — يملك كل الصلاحيات دائماً", parent=win)
                 return
             plabels = dict(PERMISSIONS)
             granted = [k for k in new_perms if k not in old_perms]
@@ -3846,6 +4707,13 @@ class App(tk.Tk):
             row = conn.execute("SELECT * FROM users WHERE id=?", (int(sel[0]),)).fetchone()
         if row is None:
             return
+        # ★ إضافة (الإصدار 14 — الجزء صفر): حماية حساب الأدمن — لا تُعاد
+        # كلمة مروره إلا من الأدمن نفسه
+        if is_admin_user(row["username"]) and not is_admin_user(self.user_name):
+            messagebox.showwarning("ممنوع",
+                f"المستخدم «{row['username']}» أدمن — لا يمكن تنفيذ الإجراء عليه "
+                "إلا من الأدمن نفسه")
+            return
         # ★ إضافة (إصدار 8 — الميزة 3): تسجيل النافذة في التتبع المركزي
         win = self.register_window(tk.Toplevel(self))
         win.title("إعادة تعيين كلمة المرور")
@@ -3868,8 +4736,10 @@ class App(tk.Tk):
 
         def do_reset():
             p1, p2 = e_pwd.get(), e_con.get()
-            if len(p1) < 4:
-                messagebox.showwarning("تنبيه", "كلمة المرور قصيرة جداً (4 أحرف على الأقل)", parent=win); return
+            # ★ تعديل مصرح به (الإصدار 14 — البند 11): الحد الأدنى صار حسب دور
+            # هذا الحساب — مدير/أدمن: 6 أحرف وفيها رقم / بائع: 4 أحرف
+            if not pw_role_ok(p1, row["role"]):
+                messagebox.showwarning("تنبيه", pw_role_message(row["role"]), parent=win); return
             if p1 != p2:
                 messagebox.showwarning("تنبيه", "التأكيد لا يطابق كلمة المرور", parent=win); return
             salt = secrets.token_hex(16)
@@ -3893,6 +4763,13 @@ class App(tk.Tk):
         with connect() as conn:
             row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
         if row is None:
+            return
+        # ★ إضافة (الإصدار 14 — الجزء صفر): حماية حساب الأدمن — لا يُوقف ولا
+        # يُفعَّل إلا من الأدمن نفسه (والأدمن نفسه ممنوع من إيقاف نفسه أصلاً)
+        if is_admin_user(row["username"]) and not is_admin_user(self.user_name):
+            messagebox.showwarning("ممنوع",
+                f"المستخدم «{row['username']}» أدمن — لا يمكن تنفيذ الإجراء عليه "
+                "إلا من الأدمن نفسه")
             return
         if row["username"] == self.user_name:
             messagebox.showwarning("ممنوع", "لا يمكنك إيقاف حسابك نفسه"); return
@@ -3956,6 +4833,9 @@ class App(tk.Tk):
             ["الصافي", "المرتجعات", "شبكة", "نقداً", "عدد العمليات", "البائع"],
             [120, 120, 115, 115, 100, 160])
         frm.pack(fill="both", expand=True, padx=25, pady=8)
+        # ★ إضافة (الإصدار 14 — البندان 5+6): فرز الرؤوس + الصفوف المتناوبة
+        enable_tree_sorting(self.tv_sellers)
+        config_tree_stripes(self.tv_sellers)
 
         # ★ الإجمالي التراكمي أسفل الجدول
         self.lbl_perf_total = tk.Label(p, text="", bg=BG, fg=ACCENT, font=FB)
@@ -4015,9 +4895,10 @@ class App(tk.Tk):
             net = a["cash"] + a["netw"] - a["rv"]
             rows.append([round(net, 2), round(a["rv"], 2), round(a["netw"], 2),
                          round(a["cash"], 2), a["n"], seller])
-        for r in rows:
-            self.tv_sellers.insert("", "end", values=(money(r[0]), money(r[1]), money(r[2]),
-                                                      money(r[3]), r[4], r[5]))
+        for i, r in enumerate(rows):
+            self.tv_sellers.insert("", "end", tags=stripe_tags(i),
+                values=(money(r[0]), money(r[1]), money(r[2]),
+                        money(r[3]), r[4], r[5]))
         if not rows:
             self.lbl_perf_total.config(text="لا توجد عمليات في هذا المدى", fg=GRAY)
         else:
@@ -4082,6 +4963,86 @@ class App(tk.Tk):
         win.protocol("WM_DELETE_WINDOW", win.destroy)
         win.wait_window(win)          # حلقة أحداث محلية آمنة — تعود فور إغلاق النافذة
         return result if result["role"] else None
+
+    def session_lock(self):
+        """★ إضافة (الإصدار 14 — البند 10): قفل الجلسة — يخفي البرنامج كاملاً
+        (النافذة الرئيسية وكل النوافذ المفتوحة) خلف نافذة كلمة مرور الحساب
+        الحالي (الاسم معروض ثابتاً ولا يُكتب شيء غير كلمة المرور)، والعودة
+        بكلمة المرور الصحيحة تُعيد كل شيء كما كان بالضبط (الصفحة والسلة
+        والنوافذ) دون إغلاق أي شيء — إغلاق نافذة القفل يطلب تأكيد الخروج"""
+        audit("قفل جلسة", f"قفل جهاز — الجلسة باسم {self.user_name}")
+        # إخفاء كل النوافذ المفتوحة أولاً ثم الرئيسية — تُعاد كلها كما كانت
+        hidden = []
+        for w in list(getattr(self, "open_windows", [])):
+            try:
+                if w.winfo_exists():
+                    w.withdraw()
+                    hidden.append(w)
+            except Exception:
+                pass
+        self.withdraw()
+
+        lock = tk.Toplevel(self)
+        lock.title("🔒 جلسة مقفلة")
+        lock.geometry("400x310")
+        lock.configure(bg=CARD)
+        lock.resizable(False, False)
+        try:      # تُعرض في مكان النافذة الرئيسية نفسه
+            lock.geometry(f"+{self.winfo_x()}+{self.winfo_y()}")
+        except Exception:
+            pass
+        lock.protocol("WM_DELETE_WINDOW", lambda: on_close())
+
+        tk.Label(lock, text="🔒", bg=CARD, fg=DARK, font=("Segoe UI", 30)).pack(pady=(18, 2))
+        tk.Label(lock, text="الجلسة مقفلة", bg=CARD, fg=DARK, font=FT).pack()
+        tk.Label(lock, text=f"الحساب: {self.user_name} ({self.role})", bg=CARD, fg=GRAY,
+                 font=("Segoe UI", 10)).pack(pady=(0, 10))
+        fr = tk.Frame(lock, bg=CARD)
+        fr.pack(fill="x", padx=30)
+        tk.Label(fr, text="كلمة المرور:", bg=CARD, fg=DARK, font=FB, width=14,
+                 anchor="e").pack(side="right")
+        e_pwd = tk.Entry(fr, font=F, justify="center", show="•", relief="solid", bd=1, width=18)
+        e_pwd.pack(side="right", padx=(0, 8), ipady=4)
+        add_eye_to_entry(e_pwd)               # زر العين داخل الحقل ككل حقول كلمات المرور
+        err = tk.Label(lock, text="", bg=CARD, fg=RED, font=("Segoe UI", 9, "bold"),
+                       wraplength=330, justify="center")
+        err.pack(fill="x", padx=30, pady=(4, 0))
+        e_pwd.focus_set()
+
+        def unlock():
+            urow = get_user_row(self.user_name)
+            if urow is None or not verify_user_password(urow, e_pwd.get()):
+                err.config(text="كلمة المرور غير صحيحة — حاول من جديد")
+                shake_widget(lock)
+                flash_entry_red(e_pwd)
+                e_pwd.delete(0, "end")
+                e_pwd.focus_set()
+                return
+            audit("فتح جلسة", f"عودة {self.user_name} بعد القفل")
+            lock.destroy()
+            # إعادة كل شيء كما كان بالضبط — النوافذ المخفية ثم الرئيسية
+            for w in hidden:
+                try:
+                    if w.winfo_exists():
+                        w.deiconify()
+                except Exception:
+                    pass
+            self.deiconify()
+
+        def on_close():
+            if messagebox.askyesno("خروج", "الخروج من البرنامج بالكامل؟", parent=lock):
+                lock.destroy()
+                self.exit_app()
+
+        e_pwd.bind("<Return>", lambda _e: unlock())
+        fr_btns = tk.Frame(lock, bg=CARD)
+        fr_btns.pack(pady=(8, 16))
+        b_open = self.mk_btn(fr_btns, "🔓 فتح الجلسة", unlock, GREEN)
+        b_open.pack(side="right", padx=6)
+        add_tip(b_open, "العودة إلى البرنامج بكلمة مرور الحساب الحالي — كل شيء يعود كما كان")
+        b_exit = self.mk_btn(fr_btns, "⏻ خروج", on_close, RED)
+        b_exit.pack(side="right", padx=6)
+        add_tip(b_exit, "إغلاق البرنامج بالكامل (مع نسخة احتياطية تلقائية كما هو قائم)")
 
     def switch_user(self):
         """★ إضافة (إصدار 4 — ميزة 1): تبديل المستخدم دون إغلاق البرنامج —
@@ -5826,6 +6787,9 @@ class App(tk.Tk):
         frm, tv = self.mk_tree(win, ["الاسم", "الإصدار", "تاريخ الحفظ", "الحجم (KB)"],
                                [340, 90, 150, 90])
         frm.pack(fill="both", expand=True, padx=18, pady=6)
+        # ★ إضافة (الإصدار 14 — البندان 5+6): فرز الرؤوس + الصفوف المتناوبة
+        enable_tree_sorting(tv)
+        config_tree_stripes(tv)
         self._archive_rows = []          # مسارات ملفات الأرشيف بترتيب الصفوف
         lbl_count = tk.Label(win, text="", bg=CARD, fg=GRAY, font=("Segoe UI", 10))
         lbl_count.pack(pady=(2, 0))
@@ -5835,9 +6799,10 @@ class App(tk.Tk):
             tv.delete(*tv.get_children())
             self._archive_rows = []
             rows = archive_list_files()          # مرتبة من الأحدث
-            for r in rows:
-                tv.insert("", "end", values=(r["name"], r["version"],
-                                             r["saved"], r["size_kb"]))
+            for i, r in enumerate(rows):
+                tv.insert("", "end", tags=stripe_tags(i),
+                          values=(r["name"], r["version"],
+                                  r["saved"], r["size_kb"]))
                 self._archive_rows.append(r["path"])
             lbl_count.config(text=f"عدد الإصدارات المحفوظة: {len(rows)}")
         load_rows()
@@ -5946,25 +6911,49 @@ class App(tk.Tk):
 
 LOGIN_W, LOGIN_H = 420, 520      # ★ مقاس نافذة الدخول الجديدة (بلا إطار ويندوز)
 
-def pw_strength_info(pw):
-    """★ إضافة (إصدار 9 — الميزة 4): قوة كلمة المرور — (اللون، النص، المستوى):
-    أحمر «ضعيفة» أقل من 5 أحرف / برتقالي «متوسطة» 5 أحرف فأكثر /
-    أخضر «قوية» 6 أحرف فأكثر وفيها رقم على الأقل"""
-    if len(pw) < 5:
+def pw_strength_info(pw, role="بائع"):
+    """★ إضافة (إصدار 9 — الميزة 4): قوة كلمة المرور — (اللون، النص، المستوى)
+    ★ تعديل مصرح به (الإصدار 14 — البند 11): المعايير صارت حسب الدور —
+    مدير/أدمن: أحمر «غير مقبولة» أقل من 6 أحرف أو بلا رقم (الحد الأدنى 6+رقم)،
+    برتقالي «مقبولة» عند الحد الأدنى بالضبط، أخضر «قوية» 8 أحرف فأكثر وفيها رقم؛
+    بائع: كما كانت (أحمر أقل من 4 / متوسطة 4-5 / قوية 6+ وفيها رقم)"""
+    if role in ("مدير", ADMIN_ROLE):
+        if len(pw) < 6 or not any(ch.isdigit() for ch in pw):
+            return RED, "غير مقبولة", "weak"
+        if len(pw) >= 8:
+            return GREEN, "قوية", "strong"
+        return ORANGE, "مقبولة", "medium"
+    if len(pw) < 4:
         return RED, "ضعيفة", "weak"
     if len(pw) >= 6 and any(ch.isdigit() for ch in pw):
         return GREEN, "قوية", "strong"
     return ORANGE, "متوسطة", "medium"
 
-def pw_is_weak(pw):
+def pw_is_weak(pw, role="بائع"):
     """★ إضافة (إصدار 9 — الميزة 4): كلمة مرور ضعيفة جداً (أحمر) — تمنع الحفظ
-    في شاشة إنشاء المدير ونافذة تغيير كلمة المرور برسالة عربية واضحة"""
-    return pw_strength_info(pw)[2] == "weak"
+    في شاشة إنشاء المدير ونافذة تغيير كلمة المرور برسالة عربية واضحة
+    ★ تعديل مصرح به (الإصدار 14 — البند 11): الفحص صار حسب الدور"""
+    return pw_strength_info(pw, role)[2] == "weak"
 
-def make_strength_bar(parent):
+def pw_role_ok(pw, role):
+    """★ إضافة (الإصدار 14 — البند 11): هل تطبق كلمة المرور الحد الأدنى لدورها؟
+    مدير/أدمن: 6 أحرف على الأقل وفيها رقم واحد على الأقل — بائع: 4 أحرف"""
+    return not pw_is_weak(pw, role)
+
+def pw_role_message(role):
+    """★ إضافة (الإصدار 14 — البند 11): رسالة الإرشاد الواضحة لحد الدور"""
+    if role in ("مدير", ADMIN_ROLE):
+        return ("كلمة المرور للمدير/الأدمن ضعيفة — الحد الأدنى:\n"
+                "6 أحرف على الأقل وفيها رقم واحد على الأقل")
+    return "كلمة المرور قصيرة جداً (4 أحرف على الأقل)"
+
+def make_strength_bar(parent, role="بائع"):
     """★ إضافة (إصدار 9 — الميزة 4): شريط قوة كلمة المرور + النص الإرشادي
     بجانبه — يُعبّأ في مكان الاستدعاء ويرجع دالة update(pw) تُنادى عند كل
-    ضغطة مفتاح: يتغير اللون والنص (ضعيفة / متوسطة / قوية) فوراً"""
+    ضغطة مفتاح: يتغير اللون والنص (ضعيفة / متوسطة / قوية) فوراً
+    ★ تعديل مصرح به (الإصدار 14 — البند 11): الشريط صار حسب الدور — والمعامل
+    الاختياري role_getter يسمح بتحديث المعايير فوراً عند تغيير الدور المختار
+    (نافذة إضافة مستخدم) بلا إعادة بناء الشريط"""
     row = tk.Frame(parent, bg=CARD)
     row.pack(fill="x", padx=18, pady=(6, 0))
     track = tk.Frame(row, bg=BORDER, height=7)
@@ -5973,16 +6962,25 @@ def make_strength_bar(parent):
     lbl = tk.Label(row, text="قوة كلمة المرور", bg=CARD, fg=GRAY,
                    font=("Segoe UI", 9, "bold"), anchor="e")
     lbl.pack(side="right", padx=(0, 10))
-    hints = {"weak": "أقل من 5 أحرف", "medium": "5 أحرف فأكثر", "strong": "6+ أحرف وفيها رقم"}
-    def update(pw):
+    hints = {"weak":   {"بائع": "أقل من 4 أحرف",
+                       "مدير": "أقل من 6 أحرف أو بلا رقم (ممنوعة)"},
+             "medium": {"بائع": "4-5 أحرف",
+                       "مدير": "الحد الأدنى: 6+ أحرف وفيها رقم"},
+             "strong": {"بائع": "6+ أحرف وفيها رقم",
+                       "مدير": "8+ أحرف وفيها رقم"}}
+    def update(pw, cur_role=None):
         """يتحدث مع كل ضغطة مفتاح — والفراغ يعيد الحالة الرمادية الأولى"""
+        r = cur_role or role
+        if r == ADMIN_ROLE:
+            r = "مدير"     # معايير الأدمن نفس معايير المدير
         if not pw:
             track.config(bg=BORDER)
             lbl.config(text="قوة كلمة المرور", fg=GRAY)
             return
-        color, txt, level = pw_strength_info(pw)
+        color, txt, level = pw_strength_info(pw, r)
+        hint = hints[level]["مدير" if r in ("مدير", ADMIN_ROLE) else "بائع"]
         track.config(bg=color)
-        lbl.config(text=f"قوة كلمة المرور: {txt} ({hints[level]})", fg=color)
+        lbl.config(text=f"قوة كلمة المرور: {txt} ({hint})", fg=color)
     return update
 
 def add_eye_to_entry(entry):
@@ -6218,7 +7216,7 @@ def _screen_login_build(win, result):
         add_eye_to_entry(e_p1)                      # ★ (الميزة 1) زر العين داخل الحقل
         e_p2 = field_row("تأكيد كلمة المرور:", "•")
         add_eye_to_entry(e_p2)
-        strength_update = make_strength_bar(card)   # ★ (الميزة 4) الشريط تحت الحقل
+        strength_update = make_strength_bar(card, "مدير")   # ★ (الميزة 4) الشريط بمعايير المدير
         e_p1.bind("<KeyRelease>", lambda _e: strength_update(e_p1.get()))
         err_lbl = err_label()
         e_user.focus_set()
@@ -6236,10 +7234,10 @@ def _screen_login_build(win, result):
             name, p1, p2 = e_user.get().strip(), e_p1.get(), e_p2.get()
             if not name:
                 fail("اكتب اسم المستخدم"); return
-            # ★ تعديل مصرح به (الميزة 4): الضعيفة جداً (أقل من 5 أحرف = أحمر
-            # في شريط القوة) تمنع الحفظ — كانت «4 أحرف على الأقل»
-            if pw_is_weak(p1):
-                fail("كلمة المرور ضعيفة جداً — استخدم 5 أحرف على الأقل", e_p1); return
+            # ★ تعديل مصرح به (الإصدار 14 — البند 11): معايير المدير — 6 أحرف
+            # على الأقل وفيها رقم واحد على الأقل (كانت 4 أحرف لأي حساب)
+            if pw_is_weak(p1, "مدير"):
+                fail(pw_role_message("مدير"), e_p1); return
             if p1 != p2:
                 fail("التأكيد لا يطابق كلمة المرور", e_p1); return
             salt = secrets.token_hex(16)
@@ -6331,14 +7329,68 @@ def _screen_login_build(win, result):
             except Exception:
                 pass
 
+        # ★ إضافة (الإصدار 14 — البند 9): قفل الدخول المؤقت — عدّاد تنازلي
+        # على زر الدخول «انتظر 00:47» يتحرك كل ثانية حتى الصفر ثم يعود الزر
+        # «دخول» — والقفل باسم مستخدم بعينه فتبديل الاسم لإلغائه لا يجدي
+        lock_count = {"job": None, "name": None}
+
+        def stop_lock_countdown(restore=True):
+            """إلغاء العدّاد — يعيد زر الدخول إن طُلب (ولا يعيده عند إغلاق الشاشة)"""
+            if lock_count["job"] is not None:
+                try:
+                    btn.after_cancel(lock_count["job"])
+                except Exception:
+                    pass
+                lock_count["job"] = None
+            lock_count["name"] = None
+            if restore and btn.winfo_exists():
+                btn.config(text="دخول", state="normal", bg=ACCENT, cursor="hand2")
+
+        def start_lock_countdown(secs):
+            """تعطيل زر الدخول وعرض «انتظر 00:47» حتى انتهاء القفل ثم إعادته"""
+            state = {"left": max(1, int(secs))}
+            def tick():
+                if not btn.winfo_exists():
+                    lock_count["job"] = None
+                    return
+                if state["left"] <= 0:
+                    lock_count["job"] = None
+                    lock_count["name"] = None
+                    btn.config(text="دخول", state="normal", bg=ACCENT, cursor="hand2")
+                    try:
+                        e_pwd.focus_set()
+                    except Exception:
+                        pass
+                    return
+                btn.config(text=f"انتظر {state['left'] // 60:02d}:{state['left'] % 60:02d}")
+                state["left"] -= 1
+                lock_count["job"] = btn.after(1000, tick)
+            verifying["on"] = False          # القفل ليس «جارٍ التحقق» — يسمح بعدها
+            btn.config(state="disabled", bg=PRESSED, cursor="watch")
+            tick()
+
         def try_login(_e=None):
             if verifying["on"]:
                 return               # ★ (الميزة 6) منع الضغط المزدوج أثناء التحقق
+            if lock_count["job"] is not None:
+                return               # ★ (الإصدار 14 — البند 9): عدّاد قفل جارٍ الآن
             name, pwd = e_user.get().strip(), e_pwd.get()
             if not name:
                 err_lbl.config(text="اكتب اسم المستخدم")
                 shake_widget(card)
                 messagebox.showerror("خطأ", "اكتب اسم المستخدم", parent=win); return
+            # ★ إضافة (الإصدار 14 — البند 9): الاسم المكتوب مقفل حالياً؟ —
+            # عدّاد تنازلي على الزر حتى انتهاء القفل، وتبديل اسم آخر غير
+            # مقفل يلغي العدّاد ويمضي الدخول به كالمعتاد
+            rem = login_lock_remaining(name)
+            if rem > 0:
+                if lock_count["name"] != name:
+                    err_lbl.config(text=f"قُفل الدخول لـ «{name}» مؤقتاً — انتظر انتهاء العدّاد")
+                    lock_count["name"] = name
+                    start_lock_countdown(int(rem))
+                return
+            if lock_count["job"] is not None:      # اسم آخر غير مقفل — إلغاء العدّاد
+                stop_lock_countdown()
             # ★ (الميزة 6) حالة «جارٍ التحقق...»: الزر يتعطل وينتظر 400 مللي
             # قبل عرض النتيجة بإحساس طبيعي — والدخول الناجح يكمل فوراً بعدها
             verifying["on"] = True
@@ -6348,17 +7400,31 @@ def _screen_login_build(win, result):
                 row = get_user_row(name)
                 if row is None:
                     CURRENT_USER["name"] = name   # المحاولة الفاشلة تُسجل باسم المُجرّب
-                    audit("محاولة دخول فاشلة", f"اسم المستخدم غير موجود: {name}")
-                    fail_login("اسم المستخدم غير موجود")
+                    # ★ إضافة (الإصدار 14 — البند 9): تسجيل المحاولة برقمها —
+                    # وعند الخامسة المتتالية يُقفل الاسم 60 ثانية
+                    n, locked = login_register_failure(name)
+                    audit("محاولة دخول فاشلة", f"اسم المستخدم غير موجود: {name} (المحاولة {n})")
+                    fail_login("اسم المستخدم غير موجود" + (" — قُفل الدخول 60 ثانية" if locked else ""))
+                    if locked:
+                        win.after(100, lambda: start_lock_countdown(LOGIN_LOCK_SECONDS))
                 elif not verify_user_password(row, pwd):
                     CURRENT_USER["name"] = name
-                    audit("محاولة دخول فاشلة", f"كلمة المرور خاطئة: {name}")
-                    fail_login("كلمة المرور خاطئة", clear_pwd=True)
+                    n, locked = login_register_failure(name)   # ★ (البند 9)
+                    audit("محاولة دخول فاشلة", f"كلمة المرور خاطئة: {name} (المحاولة {n})")
+                    fail_login("كلمة المرور خاطئة" + (" — قُفل الدخول 60 ثانية" if locked else ""),
+                               clear_pwd=True)
+                    if locked:
+                        win.after(100, lambda: start_lock_countdown(LOGIN_LOCK_SECONDS))
                 elif not row["active"]:
                     CURRENT_USER["name"] = name
                     audit("محاولة دخول فاشلة", f"حساب موقوف: {name}")
                     fail_login("هذا الحساب موقوف — راجع المدير")
                 else:
+                    # ★ إضافة (الإصدار 14 — البند 9): الدخول الناجح يصفّر عدّاد
+                    # المحاولات الفاشلة للاسم كله
+                    LOGIN_FAILURES.pop(name, None)
+                    LOGIN_LOCKED_UNTIL.pop(name, None)
+                    stop_lock_countdown(restore=False)
                     set_setting("last_user", row["username"])   # ★ (الميزة 3) تذكر آخر مستخدم
                     CURRENT_USER["name"] = row["username"]
                     audit("تسجيل دخول", f"{row['username']} ({row['role']})")
