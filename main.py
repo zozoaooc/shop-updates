@@ -278,7 +278,7 @@ except Exception:
 import urllib.request   # ★ إضافة (إصدار 10): جلب التحديث — المكتبة القياسية وحدها
 import threading        # ★ إضافة (إصدار 10): فحص خلفي لا يجمّد الواجهة أبداً
 
-VERSION = "2.5"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
+VERSION = "2.6"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
 UPDATE_VERSION_URL = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/version.txt"
 UPDATE_FILE_URL    = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/main.py"
 # ★ إضافة (الإصدار 15 — الجزء الثاني): ملاحظات الإصدارات (changelog) —
@@ -365,6 +365,14 @@ def connect():
     conn = sqlite3.connect(DB, timeout=5)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=5000")
+    # ★ إضافة مصرح بها (الإصدار 16 — القسم 2-4): وضع WAL — أمان الكتابة عند
+    # انقطاع الكهرباء + سرعة أكبر، وsynchronous=NORMAL التوازن الأمثل معه؛
+    # والفشل في أي pragma لا يمنع فتح القاعدة أبداً (وضعها القديم يبقى)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+    except Exception:
+        pass
     return conn
 
 def init_db():
@@ -384,6 +392,13 @@ def init_db():
         bad = DB + ".tainted-" + datetime.now().strftime("%Y%m%d-%H%M%S")
         try:
             shutil.move(DB, bad)
+            # ★ إضافة (الإصدار 16 — القسم 2-4): إزالة ملفات WAL الجانبية للقاعدة
+            # التالفة كي لا تُطبَّق سجلاتها القديمة على القاعدة الجديدة أبداً
+            for _sfx in ("-wal", "-shm"):
+                try:
+                    os.remove(DB + _sfx)
+                except Exception:
+                    pass
             note(f"⚠ تعذر فتح ملف shop.db (قديم أو تالف).\n\nحُفظ كما هو جانباً باسم:\n{os.path.basename(bad)}\n\nوتم إنشاء قاعدة جديدة. بياناتك القديمة موجودة في ذلك الملف ويمكن استعادتها يدوياً بعد إصلاحه.")
         except Exception:
             pass
@@ -498,6 +513,30 @@ def _init_db_inner():
             type TEXT NOT NULL, customer_name TEXT, seller_name TEXT,
             deleted_by TEXT, deleted_at TEXT NOT NULL)""")
 
+        # ★ إضافة (الإصدار 16 — القسم 1-1): عمود رابط عملية البيع الأصلية على
+        # جدول العمليات — ترقية آمنة لا تفقد أي بيانات (المرتجعات القديمة
+        # تبقى NULL وتعرض «↩ مرجع: —» ولا يمنعها شيء رجعياً)
+        ocols16 = [r[1] for r in conn.execute("PRAGMA table_info(operations)")]
+        if "original_op_id" not in ocols16:
+            conn.execute("ALTER TABLE operations ADD COLUMN original_op_id INTEGER")
+        # ★ إضافة (الإصدار 16 — القسم 1-1): نفس الرابط على سلة المحذوفات — كي
+        # لا يضيع الربط عند حذف مرتجع ثم استعادته من السلة (إغلاق للثغرة)
+        dcols16 = [r[1] for r in conn.execute("PRAGMA table_info(deleted_operations)")]
+        if "original_op_id" not in dcols16:
+            conn.execute("ALTER TABLE deleted_operations ADD COLUMN original_op_id INTEGER")
+        # ★ إضافة (الإصدار 16 — القسم 1-3): عمود بصمة السلسلة المتسلسلة على
+        # سجل التدقيق — السجلات القديمة تبقى NULL = بداية السلسلة الجديدة بلا كسر
+        acols16 = [r[1] for r in conn.execute("PRAGMA table_info(audit_log)")]
+        if "prev_hash" not in acols16:
+            conn.execute("ALTER TABLE audit_log ADD COLUMN prev_hash TEXT")
+
+        # ★ إضافة (الإصدار 16 — القسم 2-5): فهارس تسريع البحث والأرشيف مع كبر
+        # البيانات — CREATE IF NOT EXISTS بلا أي تغيير على أي استعلام قائم
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ops_date ON operations(date)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ops_item ON operations(item_name)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_ops_seller ON operations(seller_name)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(ts)")
+
 def is_closed(d):
     with connect() as conn:
         return conn.execute("SELECT 1 FROM daily_reports WHERE report_date=?", (d,)).fetchone() is not None
@@ -521,12 +560,36 @@ def day_totals(d):
 CURRENT_USER = {"name": "مدير"}
 
 def audit(action, details=""):
-    """★ إضافة (ميزة 2): تسجيل إجراء في سجل التدقيق — لا يسبب خطأً أبداً"""
+    """★ إضافة (ميزة 2): تسجيل إجراء في سجل التدقيق — لا يسبب خطأً أبداً
+    ★ تعديل مصرح به (الإصدار 16 — القسم 1-3): كل سجل جديد يحمل بصمة سلسلة
+    متسلسلة prev_hash = sha256(السجل السابق كاملاً + بصمته + بيانات السجل
+    الجديد) — أي حذف أو تعديل يدوي خارج البرنامج يكسر السلسلة ويكشفه زر
+    «🧪 فحص سلامة السجل»؛ السجلات القديمة (NULL) بداية السلسلة بلا كسر،
+    وطرف السلسلة محفوظ في settings (audit_tip) لكشف اقتطاع النهاية، وحفظ
+    البصمة نفسه لا يمنع حفظ السجل أبداً (قاعدة قديمة مؤقتاً بعد استعادة
+    نسخة أقدم تحفظ السجلات دون سلسلة حتى الإقلاع التالي)"""
     try:
         with connect() as conn:
-            conn.execute("INSERT INTO audit_log(ts,username,action,details) VALUES(?,?,?,?)",
-                         (datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                          CURRENT_USER["name"], action, details))
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cur = conn.execute("INSERT INTO audit_log(ts,username,action,details) VALUES(?,?,?,?)",
+                               (ts, CURRENT_USER["name"], action, details))
+            try:
+                nid = cur.lastrowid
+                prev = conn.execute("SELECT id,ts,username,action,details,prev_hash "
+                                    "FROM audit_log WHERE id<? ORDER BY id DESC LIMIT 1",
+                                    (nid,)).fetchone()
+                prev_part = ("" if prev is None else
+                             f"{prev['id']}|{prev['ts']}|{prev['username']}|"
+                             f"{prev['action']}|{prev['details']}|{prev['prev_hash'] or ''}")
+                h = hashlib.sha256((prev_part + "§" +
+                                    f"{nid}|{ts}|{CURRENT_USER['name']}|{action}|{details}"
+                                    ).encode("utf-8")).hexdigest()
+                conn.execute("UPDATE audit_log SET prev_hash=? WHERE id=?", (h, nid))
+                conn.execute("INSERT INTO settings(key,value) VALUES('audit_tip',?) "
+                             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                             (f"{nid}:{h}",))
+            except Exception:
+                pass   # السجل يُحفظ دائماً — البصمة وحدها تتعطل مؤقتاً إن لزم
     except Exception:
         pass
 
@@ -847,13 +910,16 @@ def recycle_add(op_row, deleted_by):
     """★ إضافة (الإصدار 14 — البند 12): نسخ عملية محذوفة كاملة إلى سلة المحذوفات
     (نفس أعمدة operations + من حذفها + وقت الحذف) ثم تنظيف تلقائي يُبقي آخر 50"""
     with connect() as conn:
+        # ★ إضافة (الإصدار 16 — القسم 1-1): نسخ رابط عملية البيع الأصلية مع
+        # المرتجع إلى السلة — كي لا يضيع الربط عند الحذف ثم الاستعادة
         conn.execute("""INSERT INTO deleted_operations
-                        (op_id,date,item_name,quantity,price,total,type,customer_name,seller_name,deleted_by,deleted_at)
-                        VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                        (op_id,date,item_name,quantity,price,total,type,customer_name,seller_name,deleted_by,deleted_at,original_op_id)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                      (op_row["id"], op_row["date"], op_row["item_name"], op_row["quantity"],
                       op_row["price"], op_row["total"], op_row["type"],
                       op_row["customer_name"], op_row["seller_name"], deleted_by,
-                      datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                      datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                      (op_row["original_op_id"] if "original_op_id" in op_row.keys() else None)))
         conn.execute("DELETE FROM deleted_operations WHERE id NOT IN "
                      "(SELECT id FROM deleted_operations ORDER BY id DESC LIMIT ?)", (RECYCLE_KEEP,))
 
@@ -879,12 +945,302 @@ def recycle_restore(rec_id):
         return False, (f"يوم {row['date']} مغلق في الأرشيف — لا يمكن الاستعادة عليه.\n"
                        "أعد فتح اليوم من شاشة الأرشيف أولاً ثم استعدها.")
     with connect() as conn:
-        conn.execute("""INSERT INTO operations(date,item_name,quantity,price,total,type,customer_name,seller_name)
-                        VALUES(?,?,?,?,?,?,?,?)""",
+        # ★ إضافة (الإصدار 16 — القسم 1-1): استعادة رابط الأصل مع المرتجع من
+        # السلة (نفس بياناته الأصلية كلها + الرابط)
+        conn.execute("""INSERT INTO operations(date,item_name,quantity,price,total,type,customer_name,seller_name,original_op_id)
+                        VALUES(?,?,?,?,?,?,?,?,?)""",
                      (row["date"], row["item_name"], row["quantity"], row["price"], row["total"],
-                      row["type"], row["customer_name"], row["seller_name"]))
+                      row["type"], row["customer_name"], row["seller_name"],
+                      (row["original_op_id"] if "original_op_id" in row.keys() else None)))
         conn.execute("DELETE FROM deleted_operations WHERE id=?", (rec_id,))
     return True, None
+
+# ═══════════════════════════════════════════════════════════
+# ★★★ إضافات (الإصدار 16 — القسم 1-1): ربط المرتجع بعملية البيع الأصلية ↩ ★★★
+# إغلاق أكبر ثغرة غش: كل مرتجع يُربط إلزامياً بعملية بيع أصلية (نفس الصنف،
+# نقداً/شبكة) — الكمية لا تتجاوز كمية الأصل ناقصاً مرتجعاته السابقة، والسعر
+# يعود تلقائياً بسعر الأصل، والمرتجعات القديمة (NULL) تعمل كما كانت وتعرض «—»
+# ═══════════════════════════════════════════════════════════
+RET_EPS = 1e-9   # ★ إضافة (الإصدار 16): تسامح مقارنة الكميات العشرية
+
+def return_eligible_originals(item_name):
+    """★ إضافة (الإصدار 16 — القسم 1-1): عمليات البيع (نقداً/شبكة) لنفس الصنف
+    الصالحة للمرتجع — الأحدث أولاً، والكمية المعروضة هي المتبقي الصالح
+    للإرجاع (كمية الأصل ناقصاً مجموع مرتجعاته السابقة المربوطة به)"""
+    out = []
+    try:
+        with connect() as conn:
+            sales = conn.execute(
+                "SELECT id,date,quantity,price,type FROM operations "
+                "WHERE item_name=? AND type IN ('نقداً','شبكة') ORDER BY id DESC",
+                (item_name,)).fetchall()
+            for s in sales:
+                ret = conn.execute(
+                    "SELECT COALESCE(SUM(quantity),0) FROM operations "
+                    "WHERE type='مرتجع' AND original_op_id=?", (s["id"],)).fetchone()[0]
+                remaining = (s["quantity"] or 0) - (ret or 0)
+                if remaining > RET_EPS:
+                    out.append({"id": s["id"], "date": s["date"], "qty": remaining,
+                                "orig_qty": s["quantity"], "price": s["price"],
+                                "type": s["type"]})
+    except Exception:
+        return []
+    return out
+
+def return_remaining_of(op_id):
+    """★ إضافة (الإصدار 16 — القسم 1-1): الكمية المتبقية الصالحة للإرجاع من
+    عملية بيع محددة (كمية الأصل − مرتجعاته المربوطة) — 0 إن لم توجد"""
+    try:
+        with connect() as conn:
+            s = conn.execute("SELECT quantity FROM operations "
+                             "WHERE id=? AND type IN ('نقداً','شبكة')",
+                             (op_id,)).fetchone()
+            if s is None:
+                return 0.0
+            ret = conn.execute("SELECT COALESCE(SUM(quantity),0) FROM operations "
+                               "WHERE type='مرتجع' AND original_op_id=?",
+                               (op_id,)).fetchone()[0]
+            return (s["quantity"] or 0) - (ret or 0)
+    except Exception:
+        return 0.0
+
+def ret_ref_mark(is_return, orig_id):
+    """★ إضافة (الإصدار 16 — القسم 1-1): علامة رابط الأصل بجانب صف المرتجع —
+    «↩ مرجع: N» للمرتجع المربوط، و«↩ مرجع: —» للمرتجعات القديمة (NULL)،
+    وسلسلة فارغة لغير المرتجعات"""
+    if not is_return:
+        return ""
+    return (f"  ↩ مرجع: {orig_id}" if orig_id else "  ↩ مرجع: —")
+
+# ═══════════════════════════════════════════════════════════
+# ★★★ إضافات (الإصدار 16 — القسم 1-2): إحصاءات النشاط الحساس للإدارة ⚠ ★★★
+# ═══════════════════════════════════════════════════════════
+SENSITIVE_AUDIT_ACTIONS = ("حذف عملية", "إعادة فتح يوم", "استمرار يوم عمل",
+                           "محاولة دخول فاشلة")   # ★ أنواع النشاط الحساس بالسجل
+
+def alert_stats_7days():
+    """★ إضافة (الإصدار 16 — القسم 1-2): إحصاءات آخر 7 أيام من سجل التدقيق —
+    عدد الحذف وإعادة فتح اليوم والاستمرار بعد منتصف الليل ومحاولات الدخول
+    الفاشلة — لبطاقة تنبيه الإدارة (أي خطأ = أرقام صفرية بصمت تام)"""
+    try:
+        since = date.fromordinal(date.today().toordinal() - 7).isoformat()
+        with connect() as conn:
+            rows = conn.execute("SELECT action FROM audit_log WHERE ts>=?",
+                                (since,)).fetchall()
+        acts = [r["action"] for r in rows]
+        return {"deletes": acts.count("حذف عملية"),
+                "reopens": acts.count("إعادة فتح يوم"),
+                "midnight": acts.count("استمرار يوم عمل"),
+                "fails": acts.count("محاولة دخول فاشلة")}
+    except Exception:
+        return {"deletes": 0, "reopens": 0, "midnight": 0, "fails": 0}
+
+# ═══════════════════════════════════════════════════════════
+# ★★★ إضافات (الإصدار 16 — القسم 1-3): فحص سلامة سلسلة سجل التدقيق 🧪 ★★★
+# ═══════════════════════════════════════════════════════════
+def audit_chain_verify():
+    """★ إضافة (الإصدار 16 — القسم 1-3): يمشي على سجل التدقيق بترتيبه ويعيد
+    حساب بصمة كل سجل ويقارنها بالمخزنة — يرجع (سليمة؟, رسالة عربية, قائمة
+    السجلات المكسورة)؛ أي حذف أو تعديل يدوي بالقاعدة خارج البرنامج يكسر
+    السلسلة، واقتطاع نهايتها يكشفه طرف السلسلة المحفوظ في settings"""
+    try:
+        with connect() as conn:
+            rows = conn.execute("SELECT id,ts,username,action,details,prev_hash "
+                                "FROM audit_log ORDER BY id").fetchall()
+    except Exception as e:
+        return False, f"تعذر قراءة سجل التدقيق: {e}", []
+    broken, prev, chained = [], None, 0
+    for r in rows:
+        if r["prev_hash"] is not None:
+            chained += 1
+            prev_part = ("" if prev is None else
+                         f"{prev['id']}|{prev['ts']}|{prev['username']}|"
+                         f"{prev['action']}|{prev['details']}|{prev['prev_hash'] or ''}")
+            expect = hashlib.sha256((prev_part + "§" +
+                        f"{r['id']}|{r['ts']}|{r['username']}|{r['action']}|{r['details']}"
+                        ).encode("utf-8")).hexdigest()
+            if expect != r["prev_hash"]:
+                broken.append(r)
+        prev = r
+    tip = None
+    try:
+        tip = get_setting("audit_tip")
+    except Exception:
+        pass
+    if tip:
+        try:
+            tip_id = int(str(tip).split(":", 1)[0])
+            if not rows or tip_id > rows[-1]["id"]:
+                return False, ("⚠ عبث بالسجل: حُذفت سجلات من نهاية السلسلة! "
+                               f"(آخر سجل موثق كان رقم {tip_id})"), []
+        except (ValueError, IndexError):
+            pass
+    if broken:
+        b = broken[0]
+        msg = f"⚠ عبث بالسجل عند: السجل رقم {b['id']} — {b['action']} — {b['ts']}!"
+        if len(broken) > 1:
+            msg += f"  (+{len(broken) - 1} مواضع أخرى مكسورة)"
+        return False, msg, broken
+    return True, (f"✅ سجل التدقيق سليم وغير معدل — {chained} سجلاً موثقاً بالسلسلة"), []
+
+# ═══════════════════════════════════════════════════════════
+# ★★★ إضافات (الإصدار 16 — القسم 2-4 و 2-7): توحيد WAL + ضغط النسخ 🗜 ★★★
+# ═══════════════════════════════════════════════════════════
+def wal_checkpoint():
+    """★ إضافة (الإصدار 16 — القسم 2-4): توحيد ملف القاعدة قبل أي نسخ مباشر —
+    PRAGMA wal_checkpoint(TRUNCATE) يدمج كل سجلات WAL داخل shop.db ويفرّغ
+    الملف الجانبي فتصبح أي نسخة عن الملف المباشر كاملة دائماً"""
+    try:
+        con = sqlite3.connect(DB)
+        try:
+            con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            con.close()
+    except Exception:
+        pass
+
+def _zip_db_file(db_path, zip_path):
+    """★ إضافة (الإصدار 16 — القسم 2-7): ضغط ملف قاعدة إلى أرشيف zip بمكتبة
+    zipfile القياسية — يرجع True/False ولا يمس الملف الأصلي أبداً"""
+    try:
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+            z.write(db_path, arcname="shop.db")
+        return True
+    except Exception as e:
+        log_error(e)
+        try:
+            if os.path.exists(zip_path):
+                os.remove(zip_path)
+        except Exception:
+            pass
+        return False
+
+def _unzip_db_file(zip_path, out_path):
+    """★ إضافة (الإصدار 16 — القسم 2-7): فك أول ملف قاعدة داخل نسخة zip إلى
+    مسار مؤقت — يرجع اسم العضو أو يرفع استثناء واضحة (قبل أي مساس بأي ملف)"""
+    with zipfile.ZipFile(zip_path, "r") as z:
+        names = [n for n in z.namelist() if n.lower().endswith(".db")]
+        if not names:
+            raise RuntimeError("الملف المضغوط لا يحتوي ملف قاعدة بيانات")
+        data = z.read(names[0])
+    with open(out_path, "wb") as f:
+        f.write(data)
+    return names[0]
+
+# ═══════════════════════════════════════════════════════════
+# ★★★ إضافات (الإصدار 16 — القسم 2-6): مراقبة بصمة كود البرنامج 🔐 ★★★
+# sha256 لمحتوى ملف البرنامج يُحفظ عند أول تشغيل ويقارن عند كل إقلاع قبل
+# الواجهة — التعديل اليدوي خارج نظام التحديث = شاشة تحذير حمراء كاملة قبل
+# الدخول لا يمر منها إلا باعتماد المالك (كلمة سر الأدمن) أو الخروج
+# ═══════════════════════════════════════════════════════════
+CODE_HASH_KEY = "code_hash"   # ★ مفتاح بصمة الكود في جدول الإعدادات
+
+def code_file_hash(path=None):
+    """★ إضافة (الإصدار 16 — القسم 2-6): بصمة sha256 لمحتوى ملف البرنامج —
+    أو None عند تعذر القراءة (فحص صامت وسريع لا يبطئ الفتح إطلاقاً)"""
+    try:
+        p = path or os.path.abspath(__file__)
+        with open(p, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except Exception:
+        return None
+
+def code_guard_gate():
+    """★ إضافة (الإصدار 16 — القسم 2-6): بوابة بصمة الكود قبل الواجهة —
+    أول تشغيل يحفظ البصمة بصمت، وكل إقلاع يعيد الحساب ويقارن: مطابق =
+    تشغيل عادي، مختلف = شاشة تحذير حمراء كاملة قبل الدخول لا يمر منها إلا
+    باعتماد المالك بكلمة سر الأدمن (تُحدَّث البصمة ويُسجل بالتدقيق) أو الخروج؛
+    ونسخة EXE خارج الفحص تماماً، وأي خطأ في الفحص نفسه لا يمنع التشغيل أبداً"""
+    if getattr(sys, "frozen", False):
+        return True
+    h = code_file_hash()
+    if h is None:
+        return True
+    try:
+        init_db()
+        try:
+            ensure_admin_account()
+        except Exception:
+            pass
+        saved = get_setting(CODE_HASH_KEY)
+        if saved is None:
+            set_setting(CODE_HASH_KEY, h)
+            return True
+        if saved == h:
+            return True
+    except Exception:
+        return True
+    # مختلف → شاشة التحذير الحمراء الكاملة قبل الدخول (القاعدة الذهبية:
+    # شريط الأزرار السفلي يُحزم أولاً ثم المحتوى)
+    approved = {"v": False}
+    win = tk.Tk()
+    win.title("⛔ تحذير أمني — تعديل خارج نظام التحديث")
+    win.configure(bg="#7f1d1d")
+    bar = tk.Frame(win, bg="#7f1d1d")
+    bar.pack(side="bottom", fill="x", pady=(4, 20))
+    tk.Label(win, text="⛔ تم تعديل ملف البرنامج خارج نظام التحديث!",
+             bg="#7f1d1d", fg="#fecaca", font=FT, wraplength=600,
+             justify="center").pack(pady=(30, 8))
+    tk.Label(win, text="هذا غير مسموح لأسباب أمنية.",
+             bg="#7f1d1d", fg="white", font=FB, justify="center").pack(pady=2)
+    tk.Label(win, text="إن كان التعديل منك (المالك): اضغط «أنا المالك — اعتماد التعديل»\nليُحدَّث البصمة ويستمر التشغيل.",
+             bg="#7f1d1d", fg="white", font=F, wraplength=600,
+             justify="center").pack(pady=(10, 2))
+    tk.Label(win, text="إن لم يكن منك: لا تشغّل — راجع من فُتح الملف.",
+             bg="#7f1d1d", fg="#fde047", font=FB, wraplength=600,
+             justify="center").pack(pady=(2, 14))
+    prow = tk.Frame(win, bg="#7f1d1d"); prow.pack(pady=(0, 8))
+    tk.Label(prow, text="كلمة سر الأدمن (admin):", bg="#7f1d1d", fg="white",
+             font=FB).pack(side="right", padx=8)
+    ent_pwd = tk.Entry(prow, show="*", font=F, justify="center",
+                       relief="solid", bd=1, width=24)
+    ent_pwd.pack(side="right", ipady=5)
+    lbl_err = tk.Label(win, text="", bg="#7f1d1d", fg="#fde047",
+                       font=("Segoe UI", 10, "bold"), wraplength=600)
+    lbl_err.pack(pady=(2, 6))
+
+    def _close():
+        approved["v"] = False
+        win.quit()      # إيقاف الحلقة أولاً (التوافق مع تعدد جذور Tk) والتنظيف بعدها
+
+    def _approve():
+        row = get_user_row(ADMIN_USERNAME)
+        if row is None or not verify_user_password(row, ent_pwd.get()):
+            lbl_err.config(text="⛔ كلمة السر خاطئة — الاعتماد بكلمة سر حساب الأدمن (admin) فقط")
+            return
+        try:
+            set_setting(CODE_HASH_KEY, h)
+        except Exception:
+            pass
+        prev = CURRENT_USER["name"]
+        CURRENT_USER["name"] = ADMIN_USERNAME + " (المالك)"
+        audit("اعتماد تعديل كود يدوي",
+              "تغيّرت بصمة ملف البرنامج خارج نظام التحديث — اعتمدها المالك بكلمة سر الأدمن")
+        CURRENT_USER["name"] = prev
+        approved["v"] = True
+        win.quit()      # إيقاف الحلقة — والتنظيف بعد عودة mainloop
+
+    b_ok = tk.Button(bar, text="أنا المالك — اعتماد التعديل", command=_approve,
+                     bg=GREEN, fg="white", activebackground=GREEN,
+                     activeforeground="white", font=FB, bd=0, cursor="hand2",
+                     padx=18, pady=9)
+    b_ok.pack(side="right", padx=8)
+    b_no = tk.Button(bar, text="🚪 خروج", command=_close, bg="#991b1b", fg="white",
+                     activebackground="#991b1b", activeforeground="white", font=FB,
+                     bd=0, cursor="hand2", padx=18, pady=9)
+    b_no.pack(side="left", padx=8)
+    ent_pwd.bind("<Return>", lambda e: _approve())
+    ent_pwd.focus_set()
+    win.protocol("WM_DELETE_WINDOW", _close)
+    place_window(win, 700, 500)
+    win.mainloop()
+    try:
+        win.destroy()   # تنظيف النافذة بعد إيقاف الحلقة (بلا أي أثر بعد الإغلاق)
+    except Exception:
+        pass
+    return approved["v"]
 
 # ═══════════════════════════════════════════════════════════
 # ★★★ إضافات (الإصدار 14 — الجزء الثاني): تحسينات الجداول 📊 ★★★
@@ -1435,13 +1791,16 @@ def _sqlite_safe_copy(src, dst):
             pass
         return False
 
-def prune_backups(folder, prefix, keep):
+def prune_backups(folder, prefix, keep, exts=(".db",)):
     """★ إضافة (إصدار 7 — الطبقة 1): الاحتفاظ بآخر «keep» نسخة فقط في مجلد —
     حذف الأقدم تلقائياً (أسماء النسخ تُفرز زمنياً بصيغة التاريخ) ولا يسبب
-    أي خطأ أبداً"""
+    أي خطأ أبداً
+    ★ تعديل مصرح به (الإصدار 16 — القسم 2-7): معامل الامتدادات — اليومية
+    والفورية أصبحت zip فتُنظَّف الامتدادات معاً (.zip الجديدة و.db القديمة)،
+    والاستدعاءات القائمة بلا معامل تبقى على .db كما كانت حرفياً"""
     try:
         names = sorted(n for n in os.listdir(folder)
-                       if n.startswith(prefix) and n.endswith(".db"))
+                       if n.startswith(prefix) and n.endswith(exts))
         for n in (names[:-keep] if len(names) > keep else []):
             try:
                 os.remove(os.path.join(folder, n))
@@ -1458,13 +1817,29 @@ def make_auto_backup(d):
     المكانين معاً (داخلي + خارجي) إن كان المجلد الخارجي مختاراً، وإن فشل
     الخارجي تستمر الداخلية — يرجع قائمة أخطاء (فارغة عند النجاح الكامل)"""
     ensure_backup_dirs()
+    # ★ إضافة (الإصدار 16 — القسم 2-4): توحيد ملف القاعدة قبل كل نسخة —
+    # دمج سجلات WAL داخل shop.db فتكون النسخ عن الملف المباشر كاملة دائماً
+    wal_checkpoint()
     errors = []
-    daily_path = os.path.join(BACKUP_DAILY, f"backup_{d}.db")
-    if _sqlite_safe_copy(DB, daily_path):
-        prune_backups(BACKUP_DAILY, "backup_", 30)
+    # ★ تعديل مصرح به (الإصدار 16 — القسم 2-7): النسخة اليومية مضغوطة zip
+    # (بالاسم الحالي نفسه + لاحقة .zip) — نسخة متسقة عبر واجهة sqlite ثم
+    # ضغطها وحذف المؤقت، والفشل يُخطر كما كان دون إلغاء الشهرية
+    daily_path = os.path.join(BACKUP_DAILY, f"backup_{d}.zip")
+    daily_tmp = os.path.join(BACKUP_DAILY, f"backup_{d}.tmp")
+    if _sqlite_safe_copy(DB, daily_tmp) and _zip_db_file(daily_tmp, daily_path):
+        try:
+            os.remove(daily_tmp)
+        except Exception:
+            pass
+        prune_backups(BACKUP_DAILY, "backup_", 30, exts=(".zip", ".db"))
         audit("نسخة احتياطية يومية", os.path.basename(daily_path))
     else:
+        try:
+            os.remove(daily_tmp)
+        except Exception:
+            pass
         errors.append("فشل إنشاء النسخة اليومية الداخلية")
+    # ★ النسخ الشهرية تبقى .db غير مضغوطة كما هي — نسخ دائمة مباشرة
     monthly_path = os.path.join(BACKUP_MONTHLY, f"monthly_{d[:7]}.db")
     if not os.path.exists(monthly_path):            # أول إغلاق في هذا الشهر
         if _sqlite_safe_copy(DB, monthly_path):
@@ -1483,7 +1858,8 @@ def make_auto_backup(d):
                         os.makedirs(dest, exist_ok=True)
                         shutil.copy2(src_path, os.path.join(dest, os.path.basename(src_path)))
                         if sub == "daily":
-                            prune_backups(dest, "backup_", 30)
+                            # ★ تعديل (الإصدار 16 — القسم 2-7): تنظيف الامتدادات معاً
+                            prune_backups(dest, "backup_", 30, exts=(".zip", ".db"))
                     except Exception as e:
                         log_error(e)
                         errors.append(f"فشل النسخ إلى المجلد الخارجي ({sub}) — النسخ الداخلية سليمة")
@@ -1493,22 +1869,51 @@ def make_instant_backup():
     """★ إضافة (إصدار 7 — الطبقة 4): نسخة فورية يدوية instant_YYYY-MM-DD_HHMMSS.db
     في backups/instant — يُحتفظ بآخر 10 فقط — تُسجل في سجل التدقيق وترجع مسارها"""
     ensure_backup_dirs()
-    name = "instant_" + datetime.now().strftime("%Y-%m-%d_%H%M%S") + ".db"
+    # ★ إضافة (الإصدار 16 — القسم 2-4): توحيد الملف قبل النسخ (نفس اليومية)
+    wal_checkpoint()
+    # ★ تعديل مصرح به (الإصدار 16 — القسم 2-7): النسخة الفورية مضغوطة zip
+    # بالاسم الحالي نفسه + لاحقة .zip — والاستثناء عند الفشل كما كان حرفياً
+    name = "instant_" + datetime.now().strftime("%Y-%m-%d_%H%M%S") + ".zip"
     path = os.path.join(BACKUP_INSTANT, name)
-    if not _sqlite_safe_copy(DB, path):
+    tmp_db = path[:-4] + ".tmp"
+    if not (_sqlite_safe_copy(DB, tmp_db) and _zip_db_file(tmp_db, path)):
+        try:
+            os.remove(tmp_db)
+        except Exception:
+            pass
         raise RuntimeError("تعذر إنشاء النسخة الفورية — راجع error_log.txt")
-    prune_backups(BACKUP_INSTANT, "instant_", 10)
+    try:
+        os.remove(tmp_db)
+    except Exception:
+        pass
+    prune_backups(BACKUP_INSTANT, "instant_", 10, exts=(".zip", ".db"))
     audit("نسخة فورية", name)
     return path
 
 def check_backup_health(path):
     """★ إضافة (إصدار 7 — الطبقة 4): فحص صحة ملف النسخة قبل الاستعادة —
     محاولة فتحها بـ sqlite3 وقراءة جدول واحد مع فحص سلامة سريع — النسخة
-    التالفة تُرفض برسالة واضحة"""
+    التالفة تُرفض برسالة واضحة
+    ★ تعديل مصرح به (الإصدار 16 — القسم 2-7): توافق خلفي بالامتداد —
+    ملفات .zip الجديدة تُفك إلى مؤقت ثم تُفحص ثم يُحذف المؤقت،
+    وملفات .db القديمة تُفحص مباشرة كما كانت تماماً"""
     if not path or not os.path.isfile(path):
         return False, "ملف النسخة غير موجود"
+    tmp = None
+    real = path
+    if str(path).lower().endswith(".zip"):
+        tmp = str(path) + ".health_tmp"
+        try:
+            _unzip_db_file(path, tmp)
+        except Exception as e:
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+            return False, f"نسخة مضغوطة تالفة أو غير قابلة للفك:\n{e}"
+        real = tmp
     try:
-        con = sqlite3.connect(path)
+        con = sqlite3.connect(real)
         try:
             n = con.execute("SELECT COUNT(*) FROM operations").fetchone()[0]
             chk = con.execute("PRAGMA quick_check").fetchone()[0]
@@ -1519,18 +1924,40 @@ def check_backup_health(path):
         return True, f"النسخة سليمة — تحتوي {n} عملية"
     except Exception as e:
         return False, f"نسخة تالفة أو غير قابلة للقراءة:\n{e}"
+    finally:
+        if tmp:
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
 
 def count_backup_ops(path):
     """★ إضافة (إصدار 7 — الطبقة 4): عدد العمليات داخل ملف نسخة — تُفتح
-    للقراءة فقط عبر sqlite3 مباشرة على الملف دون أي مساس بالقاعدة الحالية"""
+    للقراءة فقط عبر sqlite3 مباشرة على الملف دون أي مساس بالقاعدة الحالية
+    ★ تعديل مصرح به (الإصدار 16 — القسم 2-7): .zip يُقرأ عددها بالفك المؤقت"""
+    tmp = None
+    real = path
+    if str(path).lower().endswith(".zip"):
+        tmp = str(path) + ".count_tmp"
+        try:
+            _unzip_db_file(path, tmp)
+            real = tmp
+        except Exception:
+            return -1
     try:
-        con = sqlite3.connect(path)
+        con = sqlite3.connect(real)
         try:
             return con.execute("SELECT COUNT(*) FROM operations").fetchone()[0]
         finally:
             con.close()
     except Exception:
         return -1
+    finally:
+        if tmp:
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
 
 def list_all_backups():
     """★ إضافة (إصدار 7 — الطبقة 4): جمع كل النسخ الداخلية والخارجية في
@@ -1545,7 +1972,9 @@ def list_all_backups():
         except Exception:
             return
         for fname in names:
-            if not fname.endswith(".db"):
+            # ★ تعديل مصرح به (الإصدار 16 — القسم 2-7): قبول النسخ المضغوطة
+            # الجديدة .zip مع القديمة .db — فحص الامتداد أصبح للاثنين معاً
+            if not fname.endswith((".db", ".zip")):
                 continue
             info = found.setdefault(fname, {"name": fname, "internal": False,
                                             "external": False, "path": None,
@@ -1597,16 +2026,34 @@ def restore_backup_file(path):
     (نسخ إلى ملف مؤقت ثم os.replace — لا يبقى ملف نصف مكتوب أبداً). البرنامج
     يستخدم اتصالات قصيرة العمر (with connect()) فلا يوجد اتصال مفتوح يُغلق —
     الاستبدال يتم خارج أي اتصال وبأمان تام. يرجع اسم نسخة الأمان عند النجاح
-    ويرفع استثناء قبل أي تغيير إن فشل أي شيء"""
+    ويرفع استثناء قبل أي تغيير إن فشل أي شيء
+    ★ تعديل مصرح به (الإصدار 16 — القسم 2-7): فحص الامتداد — .zip تُفك إلى
+    مؤقت أولاً (الفشل قبل أي مساس) ثم يُستبدل بالمفكوك، و.db تُستخدم مباشرة
+    كما كانت تماماً + (القسم 2-4) إزالة ملفات WAL الجانبية للقاعدة القديمة
+    بعد الاستبدال كي لا تُطبَّق سجلاتها على القاعدة المستعادة أبداً"""
     ensure_backup_dirs()
+    wal_checkpoint()     # ★ (الإصدار 16): توحيد الملف قبل نسخة الأمان المباشرة
     safety_name = "pre_restore_" + datetime.now().strftime("%Y-%m-%d_%H%M%S") + ".db"
     safety_path = os.path.join(BACKUP_PRERESTORE, safety_name)
     if not _sqlite_safe_copy(DB, safety_path):
         raise RuntimeError("تعذر إنشاء نسخة الأمان من القاعدة الحالية — أُلغيت الاستعادة للحماية")
+    src = path
+    tmp_db = None
+    if str(path).lower().endswith(".zip"):
+        tmp_db = str(path) + ".restore_extract"
+        _unzip_db_file(path, tmp_db)      # فشل الفك يُلغي قبل أي تغيير
+        src = tmp_db
     tmp = DB + ".restore_tmp"
     try:
-        shutil.copyfile(path, tmp)
+        shutil.copyfile(src, tmp)
         os.replace(tmp, DB)            # استبدال ذري في خطوة واحدة
+        # ★ إضافة (الإصدار 16 — القسم 2-4): إزالة ملفات WAL الجانبية للقاعدة
+        # القديمة — سجلاتها لا تُطبَّق على القاعدة المستعادة أبداً
+        for _sfx in ("-wal", "-shm"):
+            try:
+                os.remove(DB + _sfx)
+            except Exception:
+                pass
     except Exception:
         try:
             if os.path.exists(tmp):
@@ -1614,6 +2061,12 @@ def restore_backup_file(path):
         except Exception:
             pass
         raise
+    finally:
+        if tmp_db:
+            try:
+                os.remove(tmp_db)
+            except Exception:
+                pass
     return safety_name
 
 def export_xlsx_multi(path, sheets, desc=""):
@@ -2461,6 +2914,14 @@ class App(tk.Tk):
         except Exception as e:
             log_error(e, sys.exc_info()[2])
         self.refresh_business_day_ui()
+        # ★ إضافة (الإصدار 16 — القسم 1-2): فحص صامت لإحصاءات النشاط الحساس
+        # آخر 7 أيام بعد الدخول مباشرة (after) — للمدير/الأدمن فقط: إن وُجد
+        # نشاط يستحق المراجعة ظهرت بطاقة تنبيه أعلى لوحة المعلومات، وإلا
+        # صمت تام لا يظهر أي شيء (والإخفاء جلسي فقط)
+        self.alert_data = None
+        self.alert_dismissed = False
+        if manager_level(self.role):
+            self.after(700, self._alert_scan)
 
         # ★ ملاحظات بدء التشغيل (ترقية قاعدة / حجر صحي) تُعرض مرة واحدة
         if NOTES:
@@ -2876,6 +3337,33 @@ class App(tk.Tk):
                            activeforeground=col, indicatoron=0, width=10, bd=1,
                            relief="solid", cursor="hand2", command=self.update_calc).pack(side="right", padx=10)
 
+        # ★★★ إضافة (الإصدار 16 — القسم 1-1): ربط المرتجع بعملية البيع الأصلية —
+        # صف «العملية المُرجَعة» يظهر عند اختيار «مرتجع» فقط: قائمة إلزامية
+        # بعمليات البيع الصالحة (نفس الصنف، نقداً/شبكة، الأحدث أولاً، والكمية
+        # المعروضة = المتبقي الصالح للإرجاع بعد خصم المرتجعات السابقة)،
+        # والسعر يُعبأ بسعر الأصل ويُقفل للتعديل — ممنوع مرتجع بلا أصل
+        self._orig_map = {}
+        self._trow_ref = trow
+        self.fr_orig = tk.Frame(form, bg=CARD)
+        orow = tk.Frame(self.fr_orig, bg=CARD); orow.pack(fill="x", pady=4)
+        tk.Label(orow, text="العملية المُرجَعة:", bg=CARD, fg=RED, font=FB,
+                 width=17, anchor="e").pack(side="right")
+        inner_o = tk.Frame(orow, bg=CARD)
+        inner_o.pack(side="right", padx=(0, 10))
+        self.cb_orig = ttk.Combobox(inner_o, font=F, width=42, state="readonly")
+        self.cb_orig.pack(side="right", ipady=4)
+        self.lbl_orig_info = tk.Label(orow, text="", bg=CARD, fg=GRAY,
+                                      font=("Segoe UI", 9, "bold"))
+        self.lbl_orig_info.pack(side="right", padx=8)
+        add_tip(self.cb_orig,
+                "اختر عملية البيع الأصلية لهذا المرتجع — الكمية المعروضة هي المتبقي الصالح "
+                "للإرجاع بعد خصم المرتجعات السابقة، والسعر يُعبأ بسعر الأصل تلقائياً ويُقفل")
+        self.cb_orig.bind("<<ComboboxSelected>>", lambda e: self._orig_selected())
+        self.type_var.trace_add("write", lambda *_: self._sync_return_ui())
+        self.cb_item.bind("<KeyRelease>", lambda e: self._refresh_orig_list())
+        self.cb_item.bind("<<ComboboxSelected>>", lambda e: self._refresh_orig_list())
+        self._sync_return_ui()
+
         crow = tk.Frame(form, bg="#f8fafc"); crow.pack(fill="x", padx=22, pady=(4, 10))
         fr = tk.Frame(crow, bg="#f8fafc"); fr.pack(expand=True, fill="x")
         tk.Label(fr, text="المبيع (الكمية × السعر)", bg="#f8fafc", fg=GRAY, font=("Segoe UI", 10)).pack()
@@ -2900,6 +3388,76 @@ class App(tk.Tk):
         if self.type_var.get() == "مرتجع":
             total = -total
         self.lbl_total_v.config(text=money(total), fg=(ACCENT if total >= 0 else RED))
+
+    # ★★★ إضافات (الإصدار 16 — القسم 1-1): دوال ربط المرتجع بالأصل ↩ ★★★
+    def _sync_return_ui(self):
+        """إظهار/إخفاء صف «العملية المُرجَعة» حسب النوع (يستدعيه تتبع type_var
+        تلقائياً مع كل تغيير) — عند غير المرتجع يُفتح قفل السعر ويُمسح الاختيار"""
+        try:
+            if self.type_var.get() == "مرتجع":
+                self.fr_orig.pack(fill="x", padx=22, pady=6, after=self._trow_ref)
+                self._refresh_orig_list()
+            else:
+                self.fr_orig.pack_forget()
+                self.cb_orig.set("")
+                self._orig_map = {}
+                self.lbl_orig_info.config(text="", fg=GRAY)
+                if str(self.e_price.cget("state")) == "disabled":
+                    self.e_price.config(state="normal")
+                    self.e_price.delete(0, "end")
+        except Exception:
+            pass
+
+    def _refresh_orig_list(self):
+        """تحديث قائمة عمليات البيع الصالحة للمرتجع حسب الصنف المكتوب — أي
+        تغيير لاسم الصنف يمسح الاختيار ويفتح قفل السعر (الأصل قد يختلف)"""
+        try:
+            self.cb_orig.set("")
+            self._orig_map = {}
+            self.lbl_orig_info.config(text="", fg=GRAY)
+            if str(self.e_price.cget("state")) == "disabled":
+                self.e_price.config(state="normal")
+                self.e_price.delete(0, "end")
+            if self.type_var.get() != "مرتجع":
+                self.cb_orig["values"] = []
+                return
+            item = self.cb_item.get().strip()
+            if not item:
+                self.cb_orig["values"] = []
+                self.lbl_orig_info.config(text="اكتب اسم الصنف لعرض عمليات بيعه", fg=ORANGE)
+                return
+            lst = return_eligible_originals(item)
+            labels = []
+            for o in lst:
+                lbl = (f'[{o["id"]}] — [{o["date"]}] — كمية [{o["qty"]:g}] — '
+                       f'بـ [{o["price"]:g}] — [{o["type"]}]')
+                labels.append(lbl)
+                self._orig_map[lbl] = o
+            self.cb_orig["values"] = labels
+            if not labels:
+                self.lbl_orig_info.config(text="لا عمليات بيع صالحة للمرتجع لهذا الصنف", fg=RED)
+        except Exception:
+            pass
+
+    def _orig_selected(self):
+        """تعبئة السعر بسعر الأصل وقفله + عرض المتاح للإرجاع — مرتجع بسعر
+        مختلف ممنوع: السعر يعود تلقائياً بسعر العملية الأصلية"""
+        try:
+            sel = self._orig_map.get(self.cb_orig.get())
+            if not sel:
+                return
+            self.e_price.config(state="normal")
+            self.e_price.delete(0, "end")
+            self.e_price.insert(0, f'{sel["price"]:g}')
+            self.e_price.config(state="disabled", disabledforeground=DARK)
+            self.lbl_orig_info.config(text=f'المتاح للإرجاع: {sel["qty"]:g}', fg="#0d9488")
+            self.update_calc()
+        except Exception:
+            pass
+
+    def _return_selected_original(self):
+        """العملية الأصلية المختارة حالياً (dict) أو None إن لم يُختر أصل"""
+        return self._orig_map.get(self.cb_orig.get())
 
     def save_op(self):
         # ★ إضافة (إصدار 8 — الميزة 5): صلاحية «إضافة عمليات وفواتير» — الفحص
@@ -2933,6 +3491,24 @@ class App(tk.Tk):
             messagebox.showwarning("تنبيه",
                 f"السعر غير صحيح: «{self.e_price.get()}»\nأدخل رقماً صحيحاً"); return
         t = self.type_var.get()
+        # ★ إضافة (الإصدار 16 — القسم 1-1): المرتجع يُربط بعملية بيع أصلية —
+        # لا حفظ بلا أصل، ولا كمية فوق المتبقي، والسعر بسعر الأصل دائماً
+        orig_id = None
+        if t == "مرتجع":
+            orig = self._return_selected_original()
+            if orig is None:
+                messagebox.showwarning("مرتجع بلا أصل",
+                    "اختر «العملية المُرجَعة» من القائمة أولاً —\n"
+                    "ممنوع تسجيل مرتجع بلا عملية بيع أصلية.")
+                return
+            remaining = return_remaining_of(orig["id"])
+            if q > remaining + RET_EPS:
+                messagebox.showwarning("كمية المرتجع أكبر من المتاح",
+                    f"الكمية المتاحة للإرجاع من العملية رقم {orig['id']}: {remaining:g}\n"
+                    "(كمية الأصل ناقصاً ما رُجّع منه سابقاً)")
+                return
+            pr = orig["price"]          # السعر يعود تلقائياً بسعر الأصل
+            orig_id = orig["id"]
         total = q * pr
         if t == "مرتجع":
             total = -total   # المرتجع بقيمة سالبة
@@ -2941,9 +3517,11 @@ class App(tk.Tk):
             with connect() as conn:
                 # ★ تعديل ضروري معلن (ميزة 5): أصبح الحفظ يشمل عمود customer_name
                 # ★ تعديل ضروري معلن (إصدار 3 — ميزة 3): الحفظ يسجل اسم البائع تلقائياً
-                conn.execute("INSERT INTO operations(date,item_name,quantity,price,total,type,customer_name,seller_name)"
-                             " VALUES(?,?,?,?,?,?,?,?)",
-                             (d, item, q, pr, total, t, cust, CURRENT_USER["name"]))
+                # ★ تعديل ضروري معلن (الإصدار 16 — القسم 1-1): الحفظ يشمل رابط
+                # عملية البيع الأصلية (NULL لغير المرتجعات كما كانت)
+                conn.execute("INSERT INTO operations(date,item_name,quantity,price,total,type,customer_name,seller_name,original_op_id)"
+                             " VALUES(?,?,?,?,?,?,?,?,?)",
+                             (d, item, q, pr, total, t, cust, CURRENT_USER["name"], orig_id))
         except Exception as e:
             messagebox.showerror("خطأ في الحفظ", f"تعذر حفظ العملية:\n{e}")
             return
@@ -2954,7 +3532,9 @@ class App(tk.Tk):
         self.refresh_items(); self.refresh_today(); self.refresh_stats()
         self.lbl_status.config(text=f"✔ تم حفظ العملية ({t})", fg=GREEN)
         audit("حفظ عملية",                      # ★ إضافة (ميزة 2): تسجيل الحفظ في سجل التدقيق
-              f"{t}: {item} — {q:g} × {pr:g} = {total:g}" + (f" | عميل: {cust}" if cust else ""))
+              f"{t}: {item} — {q:g} × {pr:g} = {total:g}" + (f" | عميل: {cust}" if cust else "")
+              # ★ إضافة (الإصدار 16 — القسم 1-1): توثيق ربط المرتجع بأصله
+              + (f" | مرتبط بالعملية رقم {orig_id}" if orig_id else ""))
 
     def refresh_items(self):
         with connect() as conn:
@@ -3110,8 +3690,11 @@ class App(tk.Tk):
             # ★ إضافة (الإصدار 14 — البند 6): شارة الصف المتناوب مع بقاء المرتجع أحمر
             self.tv_today.insert("", "end", iid=str(r["id"]),
                 tags=stripe_tags(i, r["type"] == "مرتجع"),
+                # ★ إضافة (الإصدار 16 — القسم 1-1): صف المرتجع يعرض بجانبه
+                # «↩ مرجع: [رقم الأصل]» — والقديمة بلا رابط تعرض «—»
                 values=(r["type"], money(r["total"]), money(r["price"]),
-                        f'{r["quantity"]:g}', r["item_name"],
+                        f'{r["quantity"]:g}',
+                        r["item_name"] + ret_ref_mark(r["type"] == "مرتجع", r["original_op_id"]),
                         (r["customer_name"] or ""),
                         (r["seller_name"] or "—"), r["date"]))   # ★ ميزة 3+5 (إصدار 3): عمودا العميل والبائع
         # ★ إضافة (الإصدار 14 — البند 8): العداد الدائم — يُحدّث مع كل تعبئة
@@ -3770,8 +4353,11 @@ class App(tk.Tk):
         tv.tag_configure("ret", foreground=RED)
         for r in rows:
             tv.insert("", "end", tags=(("ret",) if r["type"] == "مرتجع" else ()),
+                # ★ إضافة (الإصدار 16 — القسم 1-1): «↩ مرجع: [رقم الأصل]» بجانب
+                # المرتجع — والقديمة بلا رابط تعرض «—»
                 values=(r["type"], money(r["total"]), money(r["price"]),
-                        f'{r["quantity"]:g}', r["item_name"],
+                        f'{r["quantity"]:g}',
+                        r["item_name"] + ret_ref_mark(r["type"] == "مرتجع", r["original_op_id"]),
                         (r["customer_name"] or ""),
                         (r["seller_name"] or "—"), r["date"]))   # ★ ميزة 3+5 (إصدار 3): عمودا العميل والبائع
 
@@ -3993,8 +4579,11 @@ class App(tk.Tk):
             total += r["total"]
             # ★ إضافة (الإصدار 14 — البندان 5+6): شارة الصف المتناوب مع بقاء المرتجع أحمر
             self.tv_search.insert("", "end", tags=stripe_tags(i, r["type"] == "مرتجع"),
+                # ★ إضافة (الإصدار 16 — القسم 1-1): «↩ مرجع: [رقم الأصل]» بجانب
+                # المرتجع — والقديمة بلا رابط تعرض «—»
                 values=(r["type"], money(r["total"]), money(r["price"]),
-                        f'{r["quantity"]:g}', r["item_name"],
+                        f'{r["quantity"]:g}',
+                        r["item_name"] + ret_ref_mark(r["type"] == "مرتجع", r["original_op_id"]),
                         (r["customer_name"] or ""),
                         (r["seller_name"] or "—"), r["date"]))   # ★ ميزة 3+5 (إصدار 3): عمودا العميل والبائع
         self.lbl_search.config(text=f"نتائج «{q}»: {len(rows)} عملية — الإجمالي الكلي: {money(total)}")
@@ -4002,6 +4591,9 @@ class App(tk.Tk):
     # ---------- الخروج والنسخ الاحتياطي ----------
     def backup_now(self):
         try:
+            # ★ إضافة (الإصدار 16 — القسم 2-4): توحيد الملف قبل النسخ المباشر —
+            # دمج سجلات WAL داخل shop.db فتكون النسخة عن الملف كاملة دائماً
+            wal_checkpoint()
             shutil.copy2(DB, BACKUP)
             audit("نسخة احتياطية", BACKUP)      # ★ إضافة (ميزة 2): تسجيل النسخ الاحتياطي
             messagebox.showinfo("تم", f"تم إنشاء نسخة احتياطية:\n{BACKUP}")
@@ -4010,6 +4602,9 @@ class App(tk.Tk):
 
     def exit_app(self):
         try:
+            # ★ إضافة (الإصدار 16 — القسم 2-4): نفس توحيد WAL قبل نسخة الخروج
+            # المباشرة — بلا هذه الخطوة كانت نسخة الخروج تنقصها آخر الكتابات
+            wal_checkpoint()
             shutil.copy2(DB, BACKUP)
         except Exception:
             pass
@@ -4131,6 +4726,31 @@ class App(tk.Tk):
                            activeforeground=col, indicatoron=0, width=10, bd=1,
                            relief="solid", cursor="hand2").pack(side="right", padx=10)
 
+        # ★★★ إضافة (الإصدار 16 — القسم 1-1): نفس ربط المرتجع بالأصل في شاشة
+        # الفاتورة — صف «العملية المُرجَعة» يظهر عند «مرتجع» فقط، والمتاح
+        # للإرجاع يخصم أيضاً ما أُضيف للسلة على نفس الأصل في هذه الفاتورة
+        self._inv_orig_map = {}
+        self._trow_inv_ref = trow
+        self.fr_inv_orig = tk.Frame(form, bg=CARD)
+        iorow = tk.Frame(self.fr_inv_orig, bg=CARD); iorow.pack(fill="x", pady=4)
+        tk.Label(iorow, text="العملية المُرجَعة:", bg=CARD, fg=RED, font=FB,
+                 width=17, anchor="e").pack(side="right")
+        inner_io = tk.Frame(iorow, bg=CARD)
+        inner_io.pack(side="right", padx=(0, 10))
+        self.cb_inv_orig = ttk.Combobox(inner_io, font=F, width=42, state="readonly")
+        self.cb_inv_orig.pack(side="right", ipady=4)
+        self.lbl_inv_orig_info = tk.Label(iorow, text="", bg=CARD, fg=GRAY,
+                                          font=("Segoe UI", 9, "bold"))
+        self.lbl_inv_orig_info.pack(side="right", padx=8)
+        add_tip(self.cb_inv_orig,
+                "اختر عملية البيع الأصلية لهذا الصنف المرتجع — الكمية المعروضة هي المتبقي "
+                "الصالح للإرجاع (بعد خصم المرتجعات السابقة وما أُضيف للسلة)، والسعر بسعر الأصل")
+        self.cb_inv_orig.bind("<<ComboboxSelected>>", lambda e: self._inv_orig_selected())
+        self.inv_type_var.trace_add("write", lambda *_: self._sync_inv_return_ui())
+        self.cb_inv_item.bind("<KeyRelease>", lambda e: self._refresh_inv_orig_list())
+        self.cb_inv_item.bind("<<ComboboxSelected>>", lambda e: self._refresh_inv_orig_list())
+        self._sync_inv_return_ui()
+
         crow = tk.Frame(form, bg=CARD); crow.pack(fill="x", padx=22, pady=(2, 12))
         self.mk_btn(crow, "➕ إضافة إلى السلة", self.add_to_cart, GREEN).pack(side="right")
         self.lbl_inv_status = tk.Label(crow, text="", bg=CARD, font=FB)
@@ -4169,12 +4789,34 @@ class App(tk.Tk):
             messagebox.showwarning("تنبيه",
                 f"السعر غير صحيح: «{self.e_inv_price.get()}»\nأدخل رقماً صحيحاً"); return
         t = self.inv_type_var.get()
+        # ★ إضافة (الإصدار 16 — القسم 1-1): المرتجع في السلة يُربط بالأصل —
+        # لا إضافة بلا أصل، ولا كمية فوق المتبقي (بعد خصم ما بالسلة)،
+        # والسعر بسعر الأصل دائماً
+        orig_id = None
+        if t == "مرتجع":
+            orig = self._inv_orig_map.get(self.cb_inv_orig.get())
+            if orig is None:
+                messagebox.showwarning("مرتجع بلا أصل",
+                    "اختر «العملية المُرجَعة» من القائمة أولاً —\n"
+                    "ممنوع إضافة مرتجع بلا عملية بيع أصلية.")
+                return
+            if q > orig["qty"] + RET_EPS:      # orig["qty"] = المتاح بعد خصم السلة
+                messagebox.showwarning("كمية المرتجع أكبر من المتاح",
+                    f"الكمية المتاحة للإرجاع من العملية رقم {orig['id']}: {orig['qty']:g}\n"
+                    "(كمية الأصل ناقصاً المرتجعات السابقة وما أُضيف للسلة)")
+                return
+            pr = orig["price"]          # السعر يعود تلقائياً بسعر الأصل
+            orig_id = orig["id"]
         total = q * pr
         if t == "مرتجع":
             total = -total          # المرتجع في السلة أيضاً بقيمة سالبة
-        self.cart.append({"item": item, "qty": q, "price": pr, "total": total, "type": t})
+        # ★ تعديل ضروري معلن (الإصدار 16 — القسم 1-1): صف السلة يحمل رابط الأصل
+        self.cart.append({"item": item, "qty": q, "price": pr, "total": total, "type": t,
+                          "orig_id": orig_id})
         self.e_inv_qty.delete(0, "end"); self.e_inv_price.delete(0, "end")
         self.cb_inv_item.set("")
+        # ★ إضافة (الإصدار 16): تحديث قائمة الأصول — المتاح تغيّر بما أُضيف
+        self._refresh_inv_orig_list()
         self.update_cart_view()
         self.lbl_inv_status.config(text=f"✔ أُضيف إلى السلة ({t}: {item})", fg=GREEN)
 
@@ -4193,11 +4835,86 @@ class App(tk.Tk):
         for i, it in enumerate(self.cart):
             self.tv_cart.insert("", "end", iid=str(i),
                 tags=(("ret",) if it["type"] == "مرتجع" else ()),
+                # ★ إضافة (الإصدار 16 — القسم 1-1): «↩ مرجع: [رقم الأصل]» بجانب
+                # صنف المرتجع داخل السلة
                 values=(it["type"], money(it["total"]), money(it["price"]),
-                        f'{it["qty"]:g}', it["item"]))
+                        f'{it["qty"]:g}',
+                        it["item"] + ret_ref_mark(it["type"] == "مرتجع", it.get("orig_id"))))
         tot = sum(it["total"] for it in self.cart)
         self.lbl_inv_total.config(text=f"إجمالي السلة: {money(tot)}",
                                   fg=(ACCENT if tot >= 0 else RED))
+
+    # ★★★ إضافات (الإصدار 16 — القسم 1-1): دوال ربط المرتجع بالأصل في الفاتورة ↩ ★★★
+    def _sync_inv_return_ui(self):
+        """إظهار/إخفاء صف «العملية المُرجَعة» في الفاتورة حسب النوع (يستدعيه
+        تتبع inv_type_var تلقائياً) — عند غير المرتجع يُفتح قفل السعر ويُمسح"""
+        try:
+            if self.inv_type_var.get() == "مرتجع":
+                self.fr_inv_orig.pack(fill="x", padx=22, pady=6, after=self._trow_inv_ref)
+                self._refresh_inv_orig_list()
+            else:
+                self.fr_inv_orig.pack_forget()
+                self.cb_inv_orig.set("")
+                self._inv_orig_map = {}
+                self.lbl_inv_orig_info.config(text="", fg=GRAY)
+                if str(self.e_inv_price.cget("state")) == "disabled":
+                    self.e_inv_price.config(state="normal")
+                    self.e_inv_price.delete(0, "end")
+        except Exception:
+            pass
+
+    def _refresh_inv_orig_list(self):
+        """تحديث قائمة الأصول الصالحة حسب الصنف المكتوب — المتاح يخصم المرتجعات
+        السابقة وما أُضيف للسلة على نفس الأصل في هذه الفاتورة"""
+        try:
+            self.cb_inv_orig.set("")
+            self._inv_orig_map = {}
+            self.lbl_inv_orig_info.config(text="", fg=GRAY)
+            if str(self.e_inv_price.cget("state")) == "disabled":
+                self.e_inv_price.config(state="normal")
+                self.e_inv_price.delete(0, "end")
+            if self.inv_type_var.get() != "مرتجع":
+                self.cb_inv_orig["values"] = []
+                return
+            item = self.cb_inv_item.get().strip()
+            if not item:
+                self.cb_inv_orig["values"] = []
+                self.lbl_inv_orig_info.config(text="اكتب اسم الصنف لعرض عمليات بيعه", fg=ORANGE)
+                return
+            claims = {}     # ما CLAIMه السلة على كل أصل في هذه الفاتورة
+            for it in self.cart:
+                if it.get("type") == "مرتجع" and it.get("orig_id"):
+                    claims[it["orig_id"]] = claims.get(it["orig_id"], 0) + it["qty"]
+            labels = []
+            for o in return_eligible_originals(item):
+                avail = o["qty"] - claims.get(o["id"], 0)
+                if avail <= RET_EPS:
+                    continue      # استُهلك متاحه داخل هذه الفاتورة
+                o = dict(o)
+                o["qty"] = avail
+                lbl = (f'[{o["id"]}] — [{o["date"]}] — كمية [{avail:g}] — '
+                       f'بـ [{o["price"]:g}] — [{o["type"]}]')
+                labels.append(lbl)
+                self._inv_orig_map[lbl] = o
+            self.cb_inv_orig["values"] = labels
+            if not labels:
+                self.lbl_inv_orig_info.config(text="لا عمليات بيع صالحة للمرتجع لهذا الصنف", fg=RED)
+        except Exception:
+            pass
+
+    def _inv_orig_selected(self):
+        """تعبئة سعر الفاتورة بسعر الأصل وقفله + عرض المتاح للإرجاع"""
+        try:
+            sel = self._inv_orig_map.get(self.cb_inv_orig.get())
+            if not sel:
+                return
+            self.e_inv_price.config(state="normal")
+            self.e_inv_price.delete(0, "end")
+            self.e_inv_price.insert(0, f'{sel["price"]:g}')
+            self.e_inv_price.config(state="disabled", disabledforeground=DARK)
+            self.lbl_inv_orig_info.config(text=f'المتاح للإرجاع: {sel["qty"]:g}', fg="#0d9488")
+        except Exception:
+            pass
 
     def save_invoice(self):
         """★ إضافة (ميزة 6): تأكيد بالمجموع ثم حفظ كل الأصناف دفعة واحدة كعمليات اليوم"""
@@ -4215,6 +4932,26 @@ class App(tk.Tk):
         if not self.cart:
             messagebox.showwarning("السلة فارغة", "أضف صنفاً واحداً على الأقل إلى السلة أولاً"); return
         cust = self.e_inv_customer.get().strip()
+        # ★ إضافة (الإصدار 16 — القسم 1-1): تحقق نهائي قبل الحفظ — كل مرتجع
+        # في السلة مربوط بأصل، ومجموع كميات السلة لكل أصل لا يتجاوز المتبقي
+        # (حماية من تغيّر البيانات بين الإضافة والحفظ)
+        for it in self.cart:
+            if it["type"] == "مرتجع" and not it.get("orig_id"):
+                messagebox.showwarning("مرتجع بلا أصل",
+                    f"الصنف «{it['item']}» في السلة مرتجع بلا عملية أصلية —\n"
+                    "أزله وأعد إضافته باختيار «العملية المُرجَعة» أولاً.")
+                return
+        _claims16 = {}
+        for it in self.cart:
+            if it["type"] == "مرتجع":
+                _claims16[it["orig_id"]] = _claims16.get(it["orig_id"], 0) + it["qty"]
+        for _oid, _qsum in _claims16.items():
+            _rem = return_remaining_of(_oid)
+            if _qsum > _rem + RET_EPS:
+                messagebox.showwarning("كمية المرتجع أكبر من المتاح",
+                    f"مجموع مرتجعات السلة على العملية رقم {_oid} ({_qsum:g})\n"
+                    f"يتجاوز الكمية المتاحة للإرجاع ({_rem:g})")
+                return
         total = sum(it["total"] for it in self.cart)
         if not messagebox.askyesno("تأكيد حفظ الفاتورة",
                 f"عدد الأصناف: {len(self.cart)}\nالمجموع: {money(total)}\n"
@@ -4226,10 +4963,12 @@ class App(tk.Tk):
             with connect() as conn:   # ★ معاملة واحدة: كل الأصناف تُحفظ وتُلتزم دفعة واحدة
                 for it in snapshot:
                     # ★ تعديل ضروري معلن (إصدار 3 — ميزة 3): كل صنف يُسجل باسم البائع الحالي
-                    conn.execute("INSERT INTO operations(date,item_name,quantity,price,total,type,customer_name,seller_name)"
-                                 " VALUES(?,?,?,?,?,?,?,?)",
+                    # ★ تعديل ضروري معلن (الإصدار 16 — القسم 1-1): كل صنف يحمل رابط
+                    # أصله إن كان مرتجعاً (NULL لغير المرتجعات كما كانت)
+                    conn.execute("INSERT INTO operations(date,item_name,quantity,price,total,type,customer_name,seller_name,original_op_id)"
+                                 " VALUES(?,?,?,?,?,?,?,?,?)",
                                  (d, it["item"], it["qty"], it["price"], it["total"], it["type"],
-                                  cust, CURRENT_USER["name"]))
+                                  cust, CURRENT_USER["name"], it.get("orig_id")))
         except Exception as e:
             messagebox.showerror("خطأ في الحفظ", f"تعذر حفظ الفاتورة:\n{e}")
             return
@@ -4238,9 +4977,13 @@ class App(tk.Tk):
         tset = {}
         for it in snapshot:
             tset[it["type"]] = tset.get(it["type"], 0) + 1
+        # ★ إضافة (الإصدار 16 — القسم 1-1): توثيق عدد المرتجعات المربوطة بالأصل
+        _nlinked16 = sum(1 for it in snapshot
+                         if it["type"] == "مرتجع" and it.get("orig_id"))
         audit("حفظ فاتورة", f"{len(snapshot)} صنف — المجموع {money(total)} — الأنواع: "
               + "، ".join(f"{k} {v}" for k, v in tset.items())
-              + (f" | عميل: {cust}" if cust else ""))   # ★ إضافة (ميزة 2)
+              + (f" | عميل: {cust}" if cust else "")
+              + (f" | مرتجعات مربوطة بالأصل: {_nlinked16}" if _nlinked16 else ""))   # ★ إضافة (ميزة 2)
         self.cart = []                          # السلة تُفرغ بعد الحفظ
         self.e_inv_customer.delete(0, "end")
         # ★ إضافة (إصدار 5): عودة الاختيار تلقائياً إلى «نقداً» بعد حفظ الفاتورة
@@ -4289,6 +5032,15 @@ class App(tk.Tk):
         b_audit_all = self.mk_btn(bar, "👁 عرض الكل", self.clear_audit_filter, "#0d9488")
         b_audit_all.pack(side="left", padx=6, pady=6)
         add_tip(b_audit_all, "إعادة الجدول كاملاً وإلغاء الفلتر النشط")
+        # ★ إضافة (الإصدار 16 — القسم 1-3): زر فحص سلامة سلسلة سجل التدقيق —
+        # مدير/أدمن فقط (يُخفى عن البائع عند تبديل المستخدم من apply_role_ui)
+        self.btn_audit_integrity = self.mk_btn(bar, "🧪 فحص سلامة السجل",
+                                               self.audit_integrity_check, "#7c3aed")
+        add_tip(self.btn_audit_integrity,
+                "إعادة حساب سلسلة التوثيق المتسلسلة لكل السجلات — أي حذف أو تعديل يدوي "
+                "خارج البرنامج يكسر السلسلة ويُعرض بالأحمر فوراً")
+        if manager_level(self.role):
+            self.btn_audit_integrity.pack(side="left", padx=6, pady=6)
         fr_act = tk.Frame(bar, bg=BG); fr_act.pack(side="right", padx=6)
         tk.Label(fr_act, text="الإجراء:", bg=BG, fg=DARK, font=FB).pack(side="right", padx=4)
         self.cb_audit_action = ttk.Combobox(fr_act, font=F, width=22, state="readonly",
@@ -4302,6 +5054,11 @@ class App(tk.Tk):
         # ★ سطر الفلتر النشط الملون فوق الجدول: «🔍 سجلات: [الاسم/الإجراء] (عدد)»
         self.lbl_audit_filter = tk.Label(p, text="", bg=BG, fg=GRAY, font=FB, anchor="e")
         self.lbl_audit_filter.pack(fill="x", padx=25)
+        # ★ إضافة (الإصدار 16 — القسم 1-3): سطر نتيجة فحص سلامة السلسلة —
+        # أخضر عند السلامة وأحمر عند اكتشاف عبث، تحت سطر الفلتر فوق الجدول
+        self.lbl_audit_integrity = tk.Label(p, text="", bg=BG, fg=GREEN, font=FB,
+                                            anchor="e", wraplength=860)
+        self.lbl_audit_integrity.pack(fill="x", padx=25)
 
         frm, self.tv_audit = self.mk_tree(p,
             ["التفاصيل", "الإجراء", "المستخدم", "التاريخ والوقت"],
@@ -4351,12 +5108,20 @@ class App(tk.Tk):
         rows = self.audit_all_rows
         if f is not None:
             key, val = f
-            rows = [r for r in rows if (r["username"] == val if key == "user"
-                                        else r["action"] == val)]
-            kind = "المستخدم" if key == "user" else "الإجراء"
-            self.lbl_audit_filter.config(
-                text=f"🔍 سجلات: {kind} = {val}   ({len(rows)} سجلاً) — اضغط «👁 عرض الكل» لإلغاء الفلتر",
-                bg="#dbeafe", fg="#1e3a8a")
+            if key == "multi":
+                # ★ إضافة (الإصدار 16 — القسم 1-2): فلتر أنواع النشاط الحساس —
+                # يفتحه زر «عرض التفاصيل» من بطاقة تنبيه الإدارة
+                rows = [r for r in rows if r["action"] in val]
+                self.lbl_audit_filter.config(
+                    text=f"⚠ سجلات النشاط الحساس   ({len(rows)} سجلاً) — اضغط «👁 عرض الكل» لإلغاء الفلتر",
+                    bg="#fee2e2", fg="#991b1b")
+            else:
+                rows = [r for r in rows if (r["username"] == val if key == "user"
+                                            else r["action"] == val)]
+                kind = "المستخدم" if key == "user" else "الإجراء"
+                self.lbl_audit_filter.config(
+                    text=f"🔍 سجلات: {kind} = {val}   ({len(rows)} سجلاً) — اضغط «👁 عرض الكل» لإلغاء الفلتر",
+                    bg="#dbeafe", fg="#1e3a8a")
         else:
             self.lbl_audit_filter.config(
                 text=f"🔍 السجلات: الكل   ({len(rows)} سجلاً)", bg=BG, fg=GRAY)
@@ -4391,6 +5156,37 @@ class App(tk.Tk):
         self.audit_filter = None
         self.cb_audit_action.set("كل الإجراءات")
         self.render_audit()
+
+    # ★★★ إضافة (الإصدار 16 — القسم 1-3): فحص سلامة سلسلة سجل التدقيق 🧪 ★★★
+    def audit_integrity_check(self):
+        """زر «🧪 فحص سلامة السجل» — مدير/أدمن فقط: يعيد حساب بصمات السلسلة
+        كاملة ويقارنها بالمخزنة؛ السلسلة السليمة «✅ سجل التدقيق سليم وغير
+        معدل» بالأخضر، وأي حذف أو تعديل يدوي خارج البرنامج يكسر السلسلة
+        فيُعرض «⚠ عبث بالسجل عند: [السجل]!» بالأحمر مع تحديد السجلات
+        المكسورة داخل الجدول نفسه — وكل فحص يُسجل في سجل التدقيق"""
+        if not manager_level(self.role):
+            messagebox.showwarning("صلاحية", "فحص سلامة السجل للمدير/الأدمن فقط")
+            return
+        ok, msg, broken = audit_chain_verify()
+        try:
+            self.lbl_audit_integrity.config(text=msg, fg=(GREEN if ok else RED))
+        except Exception:
+            pass
+        # تحديد السجلات المكسورة بالأحمر داخل الجدول إن كانت ظاهرة الآن
+        try:
+            self.tv_audit.tag_configure("tampered", background="#fecaca",
+                                        foreground="#991b1b")
+            bset = {(b["action"], b["ts"], b["username"], b["details"]) for b in broken}
+            for iid in self.tv_audit.get_children(""):
+                v = self.tv_audit.item(iid, "values")
+                if (v[1], v[3], v[2], v[0]) in bset:
+                    tags = list(self.tv_audit.item(iid, "tags") or [])
+                    if "tampered" not in tags:
+                        tags.append("tampered")
+                    self.tv_audit.item(iid, tags=tags)
+        except Exception:
+            pass
+        audit("فحص سلامة سجل التدقيق", ("السلسلة سليمة" if ok else "عبث مكتشف: " + msg))
 
     # ---------- (ميزة 1) تغيير كلمة المرور ----------
     def change_password_dialog(self):
@@ -5214,6 +6010,15 @@ class App(tk.Tk):
         self.update_bar_dismissed = False
         self.update_bar_dismissed_version = None
         self.after(1200, lambda: update_check_silent(self))
+        # ★ إضافة (الإصدار 16 — القسم 1-2): تصفير تنبيه الإدارة للمستخدم
+        # الجديد وإعادة الفحص الصامت إن كان في مستوى الإدارة — والإخفاء
+        # السابق كان لهذه الجلسة فقط فانتهى بخروج صاحبه
+        self.alert_data = None
+        self.alert_dismissed = False
+        if manager_level(self.role):
+            self.after(700, self._alert_scan)
+        else:
+            self._render_alert_card()
         self.cart = []                     # السلة تُفرغ
         if hasattr(self, "e_inv_customer"):
             self.e_inv_customer.delete(0, "end")
@@ -5280,6 +6085,16 @@ class App(tk.Tk):
         # ★ إضافة (إصدار 10): مواءمة شريط إشعار التحديث مع دور المستخدم بعد
         # التبديل — البائع يرى «راجع المدير» والمدير يرى زر «تحديث الآن»
         self.refresh_update_bar()
+        # ★ إضافة (الإصدار 16 — القسم 1-3): زر فحص سلامة السجل للمدير/الأدمن
+        # فقط — يتكيف مع تبديل المستخدم (يُخفى عن البائع ويعود للمدير)
+        try:
+            if getattr(self, "btn_audit_integrity", None) is not None:
+                if manager_level(self.role):
+                    self.btn_audit_integrity.pack(side="left", padx=6, pady=6)
+                else:
+                    self.btn_audit_integrity.pack_forget()
+        except Exception:
+            pass
 
     # ---------- (ميزة 5) تلميحات Tooltip على كل الأزرار ----------
     def attach_button_tips(self):
@@ -5362,6 +6177,11 @@ class App(tk.Tk):
         6 بطاقات (أيام العمل/المبيعات/المرتجعات/الصافي + أعلى يوم + المتوسط)،
         جدول أفضل 5 أصناف، والرسم البياني (الميزة 3) أسفل الشاشة — كلها من
         جداول operations و daily_reports باستعلامات جديدة فقط"""
+        # ★ إضافة (الإصدار 16 — القسم 1-2): حاوية بطاقة تنبيه الإدارة أعلى
+        # اللوحة — فارغة وغير مرئية عند غياب النشاط الحساس (صمت تام)،
+        # وتُملأ من _render_alert_card بعد الفحص الصامت بعد الدخول مباشرة
+        self.fr_dash_alert = tk.Frame(p, bg=BG)
+        self.fr_dash_alert.pack(fill="x", padx=25, pady=(12, 0))
         self.page_head(p, "📊 لوحة المعلومات",
                        "ملخص شامل للفترة المختارة — للمدير فقط")
 
@@ -5431,6 +6251,68 @@ class App(tk.Tk):
         self.chart_canvas.bind("<Leave>", lambda e: self.lbl_chart_info.config(
             text="📈 صافي آخر 30 يوم عمل — مرّر المؤشر فوق أي عمود لعرض قيمته",
             fg=GRAY))
+
+    # ★★★ إضافات (الإصدار 16 — القسم 1-2): لوحة تنبيهات الإدارة ⚠ ★★★
+    def _alert_scan(self):
+        """فحص صامت بعد الدخول مباشرة (بـ after) لإحصاءات آخر 7 أيام من سجل
+        التدقيق — إن وُجد نشاط حساس (حذف أو إعادة فتح يوم أو أكثر من
+        محاولتي دخول فاشلة) ظهرت بطاقة التنبيه أعلى لوحة المعلومات، وإلا
+        صمت تام لا يظهر شيء — وأي خطأ = صمت كامل بلا أي أثر"""
+        try:
+            st = alert_stats_7days()
+            self.alert_data = (st if (st["deletes"] > 0 or st["reopens"] > 0
+                                       or st["fails"] > 2) else None)
+            self._render_alert_card()
+        except Exception:
+            pass
+
+    def _render_alert_card(self):
+        """رسم/إخفاء بطاقة تنبيه الإدارة أعلى لوحة المعلومات — للمدير/الأدمن
+        فقط، أصفر أو أحمر حسب الخطورة، وتُخفى لهذه الجلسة بزر «إخفاء»"""
+        try:
+            for w in self.fr_dash_alert.winfo_children():
+                w.destroy()
+            if (not manager_level(self.role) or self.alert_dismissed
+                    or not self.alert_data):
+                return
+            d = self.alert_data
+            severe = (d["deletes"] >= 10 or d["reopens"] >= 5 or d["fails"] >= 15)
+            bg_c, bd_c, fg_c = (("#fee2e2", "#dc2626", "#991b1b") if severe
+                                else ("#fef9c3", "#f59e0b", "#92400e"))
+            card = tk.Frame(self.fr_dash_alert, bg=bg_c,
+                            highlightbackground=bd_c, highlightthickness=2)
+            card.pack(fill="x", pady=(0, 4))
+            msg = (f"⚠ نشاط يستحق المراجعة (آخر 7 أيام): {d['deletes']} حذف — "
+                   f"{d['reopens']} إعادة فتح يوم — {d['fails']} محاولات دخول فاشلة")
+            if d["midnight"] > 0:
+                msg += f" — {d['midnight']} استمرار بعد منتصف الليل"
+            tk.Label(card, text=msg, bg=bg_c, fg=fg_c, font=FB,
+                     wraplength=760, justify="right", anchor="e"
+                     ).pack(side="right", expand=True, fill="x", padx=14, pady=10)
+            b_det = self.mk_btn(card, "📋 عرض التفاصيل", self._alert_show_details,
+                                ("#b91c1c" if severe else "#b45309"))
+            b_det.pack(side="left", padx=(14, 4), pady=8)
+            add_tip(b_det, "فتح سجل التدقيق مصفلاً على هذه الأنواع من النشاط الحساس")
+            b_hide = self.mk_btn(card, "✖ إخفاء", self._alert_dismiss, "#475569")
+            b_hide.pack(side="left", padx=4, pady=8)
+            add_tip(b_hide, "إخفاء البطاقة لهذه الجلسة فقط — تعود مع الدخول القادم")
+        except Exception:
+            pass
+
+    def _alert_show_details(self):
+        """زر «عرض التفاصيل» — يفتح سجل التدقيق مصفلاً على أنواع النشاط
+        الحساس (الحذف/إعادة فتح اليوم/الاستمرار بعد منتصف الليل/محاولات الدخول)"""
+        if not self.has_permission("view_audit"):
+            messagebox.showwarning("صلاحية", "ليست لديك صلاحية «عرض سجل التدقيق»")
+            return
+        self.audit_filter = ("multi", list(SENSITIVE_AUDIT_ACTIONS))
+        self.show_page("audit")
+        self.refresh_audit()
+
+    def _alert_dismiss(self):
+        """إخفاء بطاقة التنبيه لهذه الجلسة فقط — تعود مع الدخول القادم"""
+        self.alert_dismissed = True
+        self._render_alert_card()
 
     def set_dash_period(self, key):
         """★ إضافة (إصدار 4 — ميزة 2): اختيار فترة لوحة المعلومات وإبراز زرها"""
@@ -5918,6 +6800,13 @@ class App(tk.Tk):
         b_ref = self.mk_btn(bar, "🔄 تحديث", self.refresh_backups_list, "#475569")
         b_ref.pack(side="right", padx=5)
         add_tip(b_ref, "إعادة تحميل جدول النسخ من مجلدات النسخ الداخلية والخارجية")
+        # ★ إضافة (الإصدار 16 — القسم 2-8): زر فحص سلامة قاعدة البيانات —
+        # PRAGMA integrity_check بالعربية (سليمة ✅ / تالفة ⚠ مع التفاصيل)
+        b_dbchk = self.mk_btn(bar, "🧪 فحص سلامة قاعدة البيانات",
+                              self.db_integrity_check, "#7c3aed")
+        b_dbchk.pack(side="right", padx=5)
+        add_tip(b_dbchk, "فحص شامل لسلامة ملف قاعدة البيانات (integrity_check) — "
+                         "سليمة ✅ أو تالفة ⚠ مع التفاصيل ونصيحة الاستعادة")
 
         # جدول النسخ: النوع | اسم النسخة | التاريخ | المكان | الحجم | عدد العمليات
         frm, self.tv_backups = self.mk_tree(p,
@@ -5973,6 +6862,30 @@ class App(tk.Tk):
         except Exception as e:
             log_error(e, sys.exc_info()[2])
             messagebox.showerror("خطأ", f"تعذر إنشاء النسخة الفورية:\n{e}")
+
+    # ★★★ إضافة (الإصدار 16 — القسم 2-8): فحص سلامة قاعدة البيانات 🧪 ★★★
+    def db_integrity_check(self):
+        """زر «🧪 فحص سلامة قاعدة البيانات» — يشغّل PRAGMA integrity_check
+        ويعرض النتيجة بالعربية: سليمة ✅ أو تالفة ⚠ مع تفاصيل الأخطاء
+        ونصيحة أخذ نسخة فورية واستعادة آخر نسخة سليمة، وكل فحص يُسجل
+        في سجل التدقيق"""
+        try:
+            with connect() as conn:
+                res = conn.execute("PRAGMA integrity_check").fetchall()
+            lines = [str(r[0]) for r in res]
+            if lines and lines[0] == "ok":
+                audit("فحص سلامة قاعدة البيانات", "سليمة")
+                messagebox.showinfo("فحص سلامة القاعدة",
+                                    "✅ قاعدة البيانات سليمة — لا يوجد أي تلف")
+            else:
+                audit("فحص سلامة قاعدة البيانات", "تحذير تلف: " + " | ".join(lines[:3]))
+                messagebox.showwarning("تحذير — قاعدة البيانات تالفة ⚠",
+                    "⚠ نتائج الفحص تشير إلى تلف في قاعدة البيانات:\n\n"
+                    + "\n".join(lines[:10]) +
+                    "\n\nخُذ «📋 نسخة فورية الآن» ثم استعد آخر نسخة سليمة من الجدول.")
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+            messagebox.showerror("خطأ", f"تعذر فحص قاعدة البيانات:\n{e}")
 
     def choose_external_dir(self):
         """★ إضافة (إصدار 7 — الطبقة 3): زر «اختيار مجلد النسخ الخارجي» —
@@ -6848,6 +7761,16 @@ class App(tk.Tk):
                             datetime.now().strftime("%Y-%m-%d %H:%M"))
                 audit("تحديث البرنامج",
                       f"من {VERSION} إلى {getattr(self, 'update_available_version', 'إصدار جديد')}")
+            except Exception:
+                pass
+            # ★ إضافة (الإصدار 16 — القسم 2-6): تحديث بصمة الكود تلقائياً بعد
+            # الاستبدال وقبل إعادة التشغيل — إعادة حساب sha256 للملف الجديد
+            # وحفظه في الإعدادات كي لا تظهر شاشة التحذير الحمراء بعد كل تحديث
+            # عبر النظام (الخطوة الجديدة غير المساسة سابقاً — بأقصى جهد)
+            try:
+                _new_hash16 = code_file_hash(target)
+                if _new_hash16:
+                    set_setting(CODE_HASH_KEY, _new_hash16)
             except Exception:
                 pass
             # (و) ★ تعديل مصرح به (الإصدار 15 — الجزء الثاني): رسالة النجاح
@@ -7804,6 +8727,12 @@ def login_flow():
 
 if __name__ == "__main__":
     try:
+        # ★ إضافة (الإصدار 16 — القسم 2-6): بوابة بصمة الكود قبل الواجهة —
+        # فحص صامت وسريع لملف البرنامج (sha256) قبل شاشة الدخول: المطابق
+        # يمر بلا أثر، والمعدل يدوياً خارج نظام التحديث تظهر له شاشة التحذير
+        # الحمراء الكاملة (اعتماد المالك بكلمة سر الأدمن أو الخروج)
+        if not code_guard_gate():
+            sys.exit(0)                  # زر «خروج» من شاشة التحذير — لا تشغيل
         creds = login_flow()             # ★ تعديل ضروري معلن (إصدار 3): بوابة الدخول بالحسابات
         if creds is None:
             sys.exit(0)                  # أُغلقت نافذة الدخول بدون تسجيل دخول
