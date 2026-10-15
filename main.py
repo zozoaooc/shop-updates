@@ -249,7 +249,7 @@ except Exception:
 import urllib.request   # ★ إضافة (إصدار 10): جلب التحديث — المكتبة القياسية وحدها
 import threading        # ★ إضافة (إصدار 10): فحص خلفي لا يجمّد الواجهة أبداً
 
-VERSION = "2.1"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
+VERSION = "2.2"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
 UPDATE_VERSION_URL = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/version.txt"
 UPDATE_FILE_URL    = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/main.py"
 GITHUB_TOKEN = "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"   # يملؤه المالك يدوياً عند تغييره
@@ -5101,6 +5101,11 @@ class App(tk.Tk):
                                 lambda: self.update_check_now(win, lbl, b_install, b_close), "#0369a1")
         b_recheck.pack(pady=(10, 12))
         add_tip(b_recheck, "إعادة فحص التحديثات الآن بغض النظر عن الفحص التلقائي الصامت")
+        # ★ إضافة (نافذة «عن البرنامج»): زر داخل نافذة التحديث بجانب زر الفحص —
+        # يفتح نبذة مختصرة عن البرنامج (قراءة فقط من المتغيرات والجداول
+        # القائمة بلا أي فحص شبكي عند الفتح)
+        b_about = self.mk_btn(win, "ℹ️ عن البرنامج", self.about_dialog, "#475569")
+        b_about.pack(pady=(0, 12))
         # الحالة الابتدائية: إصدار معروف من الفحص الصامت، أو فحص فوري عند الفتح
         ver = getattr(self, "update_available_version", None)
         if ver:
@@ -5292,6 +5297,150 @@ class App(tk.Tk):
             win.after(250, _poll)
         except Exception:
             pass
+
+    def about_dialog(self):
+        """★ إضافة (نافذة «عن البرنامج»): نبذة مختصرة أنيقة عن البرنامج بأسلوب
+        نافذة تسجيل الدخول القائمة (بطاقة فاتحة وسطية فوق خلفية داكنة) — قراءة
+        فقط من المتغيرات والجداول القائمة بلا أي فحص شبكي عند الفتح: الإصدار
+        الحالي، آخر تحديث ناجح من الإعدادات، حالة آخر فحص تحديث (ذاكرة الجلسة
+        ثم سجل التدقيق القائم)، تاريخ اليوم وساعة حية تتحدث كل ثانية، مستخدم
+        الجلسة، ومجلد البيانات بخط صغير قابل للتحديد مع زر نسخ 📋 للمحفظة"""
+        win = self.register_window(tk.Toplevel(self))
+        win.title("عن البرنامج")
+        W, H = 420, 520
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+        win.geometry(f"{W}x{H}+{(sw - W) // 2}+{max((sh - H) // 2 - 40, 0)}")
+        win.resizable(False, False)
+        win.configure(bg=SIDEBAR)
+        win.transient(self)
+        try:
+            win.grab_set()
+        except Exception:
+            pass
+
+        # ---------- عناصر الأسفل تُرصّ أولاً كي تثبت في مكانها ----------
+        # زر «إغلاق» رمادي داكن أسفل النافذة (نفس رمادي أزرار الإغلاق القائمة)
+        self.mk_btn(win, "إغلاق", win.destroy, "#475569").pack(side="bottom",
+                                                                pady=(4, 16))
+        # سطر صغير رمادي: البيانات محلية مع نسخ احتياطية تلقائية
+        tk.Label(win, text="البيانات محفوظة محلياً مع نسخ احتياطية تلقائية 🔒",
+                 bg=SIDEBAR, fg="#94a3b8",
+                 font=("Segoe UI", 9)).pack(side="bottom", pady=(2, 2))
+        # الفاصل الثاني (تحت البطاقة)
+        tk.Frame(win, bg="#334155", height=1).pack(side="bottom", fill="x",
+                                                   padx=46, pady=(6, 4))
+
+        # ---------- الرأس: أيقونة كبيرة + اسم البرنامج + السطر الفرعي ----------
+        tk.Label(win, text="🖥️", bg=SIDEBAR, fg="#e2e8f0",
+                 font=("Segoe UI", 30)).pack(pady=(18, 2))
+        tk.Label(win, text="نظام المبيعات والمرتجعات", bg=SIDEBAR, fg="#f1f5f9",
+                 font=FT).pack(pady=(0, 2))
+        tk.Label(win, text="برنامج إدارة محل الكمبيوتر", bg=SIDEBAR, fg="#94a3b8",
+                 font=("Segoe UI", 10)).pack(pady=(0, 8))
+        # الفاصل الأول اللطيف (بلون أهدأ من الخلفية الداكنة)
+        tk.Frame(win, bg="#334155", height=1).pack(fill="x", padx=46, pady=(2, 4))
+
+        # ---------- بطاقة المعلومات الفاتحة (CARD بإطار BORDER) ----------
+        card = tk.Frame(win, bg=CARD, highlightbackground=BORDER,
+                        highlightthickness=1)
+        card.pack(fill="both", expand=True, padx=26, pady=(0, 6))
+
+        def info_row(title, value="", value_fg=DARK, value_font=F):
+            """صف معلومة داخل البطاقة: العنوان يميناً والقيمة يساراً بخط واضح"""
+            fr = tk.Frame(card, bg=CARD)
+            fr.pack(fill="x", padx=14, pady=6)
+            tk.Label(fr, text=title, bg=CARD, fg=GRAY,
+                     font=("Segoe UI", 10, "bold"), anchor="e").pack(side="right")
+            lbl = tk.Label(fr, text=value, bg=CARD, fg=value_fg,
+                           font=value_font, anchor="w")
+            lbl.pack(side="left")
+            return lbl
+
+        # (1) الإصدار الحالي
+        info_row("الإصدار الحالي:", str(VERSION), DARK, FB)
+
+        # (2) آخر تحديث ناجح — من الإعدادات القائمة فقط (بلا أي اتصال)
+        try:
+            last_upd = get_setting("last_update_date") or "لم يتم تحديث بعد"
+        except Exception:
+            last_upd = "لم يتم تحديث بعد"
+        info_row("آخر تحديث ناجح:", last_upd,
+                 DARK if last_upd != "لم يتم تحديث بعد" else GRAY)
+
+        # (3) حالة التحديث — من نتيجة آخر فحص فقط (بلا فحص شبكي جديد): إصدار
+        # مؤكد بذاكرة الجلسة = «يتوفر تحديث جديد»، وإلا نتيجة آخر فحص مسجلة
+        # في سجل التدقيق القائم («أحدث إصدار») — وإن لم يُجرَ فحص قط أو فشل
+        # الفحص الأخير = «—»
+        if getattr(self, "update_available_version", None):
+            state_txt, state_fg = "يتوفر تحديث جديد", ORANGE
+        else:
+            state_txt, state_fg = "—", GRAY
+            try:
+                with connect() as conn:
+                    r = conn.execute(
+                        "SELECT details FROM audit_log WHERE action IN "
+                        "('فحص تحديث تلقائي', 'فحص تحديث يدوي') "
+                        "ORDER BY id DESC LIMIT 1").fetchone()
+                if r and "أحدث إصدار" in str(r["details"]):
+                    state_txt, state_fg = "أحدث إصدار", GREEN
+            except Exception:
+                pass
+        info_row("حالة التحديث:", state_txt, state_fg)
+
+        # (4) تاريخ اليوم والوقت — ساعة حية تتحدث كل ثانية بـ after
+        lbl_clock = info_row("تاريخ اليوم والوقت:", "", DARK, ("Segoe UI", 10))
+
+        def _tick():
+            try:
+                if not win.winfo_exists():
+                    return
+                now = datetime.now()
+                d = now.strftime("%Y-%m-%d")
+                lbl_clock.config(text=f"{day_name(d)} — {d} "
+                                      + now.strftime("%H:%M:%S"))
+                win.after(1000, _tick)
+            except Exception:
+                pass
+        _tick()
+
+        # (5) مستخدم الجلسة
+        info_row("مستخدم الجلسة:",
+                 f"{getattr(self, 'user_name', '—')} "
+                 f"({getattr(self, 'role', '—')})")
+
+        # (6) مجلد البيانات — عنوان يميناً ثم المسار بخط صغير قابل للتحديد
+        fr_d = tk.Frame(card, bg=CARD)
+        fr_d.pack(fill="x", padx=14, pady=(6, 0))
+        tk.Label(fr_d, text="مجلد البيانات:", bg=CARD, fg=GRAY,
+                 font=("Segoe UI", 10, "bold"), anchor="e").pack(side="right")
+        fr_p = tk.Frame(card, bg=CARD)
+        fr_p.pack(fill="x", padx=14, pady=(2, 8))
+        e_path = tk.Entry(fr_p, font=("Segoe UI", 8), justify="center",
+                          relief="solid", bd=1)
+        e_path.insert(0, data_dir())
+        e_path.configure(state="readonly")   # للقراءة فقط — قابل للتحديد والنسخ
+        e_path.pack(side="right", fill="x", expand=True)
+
+        def _copy_done():
+            """إعادة زر النسخ لشكله بعد رسالة التأكيد القصيرة (بأقصى جهد)"""
+            try:
+                b_copy.config(text="📋", state="normal")
+            except Exception:
+                pass
+
+        def _copy_path():
+            """نسخ مسار مجلد البيانات إلى المحفظة مع رسالة تأكيد قصيرة"""
+            try:
+                win.clipboard_clear()
+                win.clipboard_append(e_path.get())
+                b_copy.config(text="✅ تم النسخ", state="disabled")
+                win.after(1500, _copy_done)
+            except Exception:
+                pass
+        b_copy = tk.Button(fr_p, text="📋", command=_copy_path, bg=CARD, fg=DARK,
+                           font=("Segoe UI", 10), bd=1, relief="solid",
+                           cursor="hand2", padx=6, pady=2)
+        b_copy.pack(side="left", padx=(0, 6))
 
 
 # ═══════════════════════════════════════════════════════════
