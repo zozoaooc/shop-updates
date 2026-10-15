@@ -192,6 +192,33 @@
   4) لمسات: سطر «الإصدار» أسفل شاشة الدخول + زر «⬇️ التحديث» في الشريط
      الجانبي للمدير فقط + تلميحات على الزرين الجديدين + زر «🔄 فحص
      التحديثات الآن» في نافذة التحديث
+
+★★★ الإصدار 13 — إصلاح أعطال التحديث الثلاثة + أرشيف الإصدارات:
+  العيب 1 (إشعار التحديث لا يظهر إلا بعد إعادة التشغيل): فحص دوري صامت
+  كل 30 دقيقة عبر after متكرر يستدعي نفس دالة الفحص القائمة — عند اكتشاف
+  إصدار أحدث يظهر الشريط الأصفر فوراً دون إعادة تشغيل ولكل الأدوار، وبلا
+  تحديث صمت تام (لا رسائل ولا أي أثر إطلاقاً)، والشريط الذي أُخفي بـ✕ لا
+  يعود في نفس الجلسة إلا إذا اكتُشف رقم أحدث فعلياً من رقم الشريط المخفي،
+  وبعد تبديل المستخدم فحص صامت واحد للجلسة الجديدة
+  العيب 2 (نافذة «عن البرنامج»): مدخل دائم واضح لكل المستخدمين من قائمة
+  المستخدم المنسدلة — قيم حقيقية ببدائل آمنة لكل حقل: الإصدار VERSION،
+  آخر تحديث ناجح أو «لم يتم تحديث بعد»، حالة التحديث من نتيجة آخر فحص
+  بالذاكرة («أحدث إصدار ✅» / «يتوفر تحديث جديد 🔔» / «—»)، تاريخ ووقت
+  حيان كل ثانية، مستخدم الجلسة بالدور، مجلد البيانات بخط صغير مع زر نسخ
+  📋 + عدد الإصدارات المحفوظة بالأرشيف — بلا أي اتصال شبكي عند الفتح
+  العيب 3 (زر «فحص التحديثات الآن» اختفى): عاد في مكانين — داخل الشريط
+  الأصفر بجانب «⬇️ تحديث الآن» + دائم الظهور للمدير في قائمة المستخدم —
+  برسائل نتيجة عربية دائماً ونص الزر «جارٍ الفحص...» أثناء الفحص ثم يعود
+  الأرشيف (versions_archive بجوار البرنامج — أو داخل مجلد البيانات إن كان
+  مجلد البرنامج غير قابل للكتابة): خطوة (ج) من التثبيت تحفظ النسخة القديمة
+  باسم منظم main_v[الإصدار]_[التاريخ].py، وملفات main_backup_* القديمة
+  تُنقل إليه تلقائياً عند بدء التشغيل بصمت (بتسجيل في سجل التدقيق)، ولا
+  يُحذف منه أي ملف تلقائياً أبداً — سجل تاريخي كامل، والتكرار بنفس الدقيقة
+  يأخذ لاحقة _2 أو _3 بلا استبدال ولا فقدان، ونافذة عرض للمدير فقط: جدول
+  بكل الملفات مرتبة من الأحدث (الاسم | الإصدار | تاريخ الحفظ | الحجم
+  بالكيلوبايت) + زر فتح مجلد الأرشيف في مستكشف ويندوز + زر استعادة أي
+  إصدار بتحذير قوي (تُحفظ النسخة الحالية في الأرشيف أولاً قبل الاستبدال —
+  لا فقدان في أي اتجاه) — وكل إجراء (فحص/تثبيت/استعادة/نقل) في سجل التدقيق
 """
 
 import tkinter as tk
@@ -249,7 +276,7 @@ except Exception:
 import urllib.request   # ★ إضافة (إصدار 10): جلب التحديث — المكتبة القياسية وحدها
 import threading        # ★ إضافة (إصدار 10): فحص خلفي لا يجمّد الواجهة أبداً
 
-VERSION = "2.2"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
+VERSION = "2.3"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
 UPDATE_VERSION_URL = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/version.txt"
 UPDATE_FILE_URL    = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/main.py"
 GITHUB_TOKEN = "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"   # يملؤه المالك يدوياً عند تغييره
@@ -1758,12 +1785,19 @@ def update_is_newer(remote, local):
     except Exception:
         return False                     # غير قابل للمقارنة = ليس أحدث
 
-def update_check_silent(app):
+def update_check_silent(app, quiet=False):
     """(1) الفحص التلقائي الصامت بعد الدخول مباشرة — لا يبطئ الفتح ولا
     يظهر شيئاً أثناءه: يجلب رقم الإصدار بمهلة 5 ثوانٍ، وأي فشل صمت تام
     (البرنامج يعمل طبيعياً 100%)، والنتيجة تُسجل في سجل التدقيق فقط
     بصمت — وعند توفر إصدار جديد يظهر شريط الإشعار الأصفر وحده دون أي
-    تفاصيل تقنية"""
+    تفاصيل تقنية
+    ★ تعديل مصرح به (إصلاح 1 — الفحص الدوري): إضافة معامل اختياري
+    quiet=False وحده — عند True (الفحص الدوري كل 30 دقيقة) يكون الصمت
+    تاماً تماماً: لا رسائل ولا أي أثر ولا سطر في سجل التدقيق عند غياب
+    تحديث أحدث أو فشل الاتصال، ولا يُسجل في سجل التدقيق إلا اكتشافُ
+    إصدار جديد فعلياً. السلوك الافتراضي (quiet=False) كما كان حرفياً
+    لكل النداءات القائمة، ونتيجة آخر فحص ختامية تُحفظ في الذاكرة
+    (update_last_check_result) في كل الأحوال لنافذة «عن البرنامج»"""
     box = update_fetch_async(UPDATE_VERSION_URL, UPDATE_CHECK_TIMEOUT)
     def _poll():
         if box["state"] != "done":
@@ -1774,19 +1808,172 @@ def update_check_silent(app):
             return
         remote = update_parse_version(box["data"] or b"")
         if remote is None:      # لا إنترنت / توكن ناقص / مستودع غير موجود
-            audit("فحص تحديث تلقائي", "تعذر الوصول للمصدر — تجاهل بهدوء")
+            if not quiet:       # الفحص الدوري: الفشل صمت تام بلا أي أثر
+                audit("فحص تحديث تلقائي", "تعذر الوصول للمصدر — تجاهل بهدوء")
             return
         if not update_is_newer(remote, VERSION):
-            audit("فحص تحديث تلقائي", f"أحدث إصدار ({VERSION})")
+            app.update_last_check_result = "latest"   # لنافذة «عن البرنامج»
+            if not quiet:       # الفحص الدوري بلا تحديث: صمت تام لا أي أثر
+                audit("فحص تحديث تلقائي", f"أحدث إصدار ({VERSION})")
             return
         app.update_available_version = remote
-        audit("فحص تحديث تلقائي", f"يتوفر إصدار جديد: {remote}")
+        app.update_last_check_result = "available"
+        audit("فحص تحديث تلقائي", f"يتوفر إصدار جديد: {remote}"
+              + (" — فحص دوري" if quiet else ""))
         try:
             app.refresh_update_bar()
         except Exception:
             pass
     try:
         app.after(250, _poll)
+    except Exception:
+        pass
+
+
+# ═══════════════════════════════════════════════════════════
+# ★★★ إضافة (أرشيف الإصدارات): مجلد versions_archive بجوار البرنامج ★★★
+# سجل تاريخي كامل لكل إصدارات البرنامج المحفوظة — لا يُحذف منه أي ملف
+# تلقائياً أبداً: خطوة (ج) من التثبيت تحفظ النسخة القديمة هنا باسم منظم،
+# وملفات main_backup_* القديمة تُنقل إليه عند بدء التشغيل، والاستعادة
+# تحفظ النسخة الحالية هنا أولاً — لا فقدان في أي اتجاه
+# ═══════════════════════════════════════════════════════════
+
+def archive_dir():
+    """مجلد أرشيف الإصدارات versions_archive — بجوار البرنامج دائماً، وإن
+    كان مجلد البرنامج غير قابل للكتابة يُنشأ داخل مجلد البيانات data_dir()
+    (بنفس أولويات مسار البيانات القائم)، ويُنشأ تلقائياً عند أول حاجة"""
+    env = os.environ.get("SHOP_DATA_DIR")
+    if env:
+        base = env
+    else:
+        base = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
+                else os.path.dirname(os.path.abspath(__file__)))
+        if not (os.path.isdir(base) and os.access(base, os.W_OK)):
+            return os.path.join(data_dir(), "versions_archive")
+    folder = os.path.join(base, "versions_archive")
+    try:
+        os.makedirs(folder, exist_ok=True)     # يُنشأ تلقائياً عند أول حاجة
+    except Exception:
+        pass
+    return folder
+
+def archive_unique_path(folder, name):
+    """مسار فريد داخل الأرشيف: نفس الاسم بنفس الدقيقة يأخذ لاحقة _2 أو _3
+    — لا استبدال ولا فقدان أبداً (الأرشيف سجل تاريخي كامل)"""
+    p = os.path.join(folder, name)
+    if not os.path.exists(p):
+        return p
+    root, ext = os.path.splitext(name)
+    n = 2
+    while os.path.exists(os.path.join(folder, f"{root}_{n}{ext}")):
+        n += 1
+    return os.path.join(folder, f"{root}_{n}{ext}")
+
+def archive_prog_root():
+    """الاسم الأساسي لملف البرنامج (main عادةً) — تسمية ملفات الأرشيف
+    main_v[الإصدار]_[التاريخ].py تتبعه أياً كان اسم الملف الفعلي"""
+    try:
+        return os.path.splitext(os.path.basename(os.path.abspath(__file__)))[0]
+    except Exception:
+        return "main"
+
+def archive_save_current():
+    """حفظ الكود الحالي في الأرشيف باسم منظم main_v[الإصدار]_[التاريخ].py
+    (مثال: main_v2.0_2025-01-15_1430.py) — يرجع مسار الملف المحفوظ أو
+    None عند أي فشل (بلا أي أثر جانبي إطلاقاً)"""
+    try:
+        target = os.path.abspath(__file__)
+        if not os.path.isfile(target):
+            return None
+        name = (archive_prog_root() + "_v" + VERSION + "_"
+                + datetime.now().strftime("%Y-%m-%d_%H%M") + ".py")
+        dest = archive_unique_path(archive_dir(), name)
+        shutil.copy2(target, dest)
+        return dest
+    except Exception:
+        return None
+
+def archive_file_version(path):
+    """قراءة رقم الإصدار لملف من الأرشيف: من اسمه أولاً (main_v2.0_...)،
+    وإن لم يكن بالاسم تُقرأ أول أسطر الملف نفسه بحثاً عن سطر VERSION —
+    و«—» عند تعذر الاثنين"""
+    stem = os.path.splitext(os.path.basename(path))[0]
+    try:
+        if "_v" in stem:
+            ver = stem.split("_v", 1)[1].split("_", 1)[0]
+            if ver and all(p.isdigit() for p in ver.split(".")):
+                return ver
+    except Exception:
+        pass
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            for _ in range(80):
+                ln = f.readline()
+                if not ln:
+                    break
+                ln = ln.strip()
+                if ln.startswith("VERSION") and "=" in ln:
+                    v = ln.split("=", 1)[1].strip().strip('"').strip("'")
+                    if v and len(v) <= 12 and all(p.isdigit() for p in v.split(".")):
+                        return v
+    except Exception:
+        pass
+    return "—"
+
+def archive_count():
+    """عدد ملفات الإصدارات المحفوظة في الأرشيف (لنافذة «عن البرنامج»)"""
+    try:
+        return len([p for p in os.listdir(archive_dir()) if p.endswith(".py")])
+    except Exception:
+        return 0
+
+def archive_list_files():
+    """كل ملفات الأرشيف مرتبة من الأحدث إلى الأقدم — كل ملف: (الاسم،
+    الإصدار، تاريخ الحفظ، الحجم بالكيلوبايت، المسار)"""
+    out = []
+    try:
+        names = [p for p in os.listdir(archive_dir()) if p.endswith(".py")]
+    except Exception:
+        return out
+    for name in names:
+        path = os.path.join(archive_dir(), name)
+        try:
+            st = os.stat(path)
+            out.append({"name": name, "path": path,
+                        "version": archive_file_version(path),
+                        "saved": datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                        "size_kb": f"{st.st_size / 1024:.1f}",
+                        "mtime": st.st_mtime})
+        except Exception:
+            continue
+    out.sort(key=lambda r: r["mtime"], reverse=True)    # الأحدث أولاً
+    return out
+
+def archive_migrate_old_backups():
+    """نقل ملفات main_backup_* القديمة بجوار البرنامج إلى versions_archive
+    عند بدء التشغيل مرة واحدة بصمت — يُنظف مجلد البرنامج من فوضى الماضي،
+    والنقل يُسجل في سجل التدقيق (بأقصى جهد — لا يسبب خطأً أبداً)"""
+    try:
+        base = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
+                else os.path.dirname(os.path.abspath(__file__)))
+        if not os.path.isdir(base):
+            return
+        prefix = archive_prog_root() + "_backup_"
+        olds = [p for p in os.listdir(base)
+                if p.startswith(prefix) and p.endswith(".py")]
+        if not olds:
+            return
+        moved = []
+        for name in olds:
+            try:
+                dest = archive_unique_path(archive_dir(), name)
+                shutil.move(os.path.join(base, name), dest)
+                moved.append(name)
+            except Exception:
+                pass
+        if moved:
+            audit("أرشيف الإصدارات",
+                  "نُقلت نسخ الأمان القديمة إلى الأرشيف: " + "، ".join(moved))
     except Exception:
         pass
 
@@ -1831,6 +2018,22 @@ class App(tk.Tk):
         # ★ إضافة (إصدار 8 — الميزة 5): مزامنة الجلسة — النافذة الرئيسية تمثل
         # المستخدم الحالي (نفس القيمة التي يضبطها تسجيل الدخول فلا سلوك جديد)
         CURRENT_USER["name"] = user_name
+        # ★ إضافة (إصلاح 1 — الفحص الدوري): حالة نتيجة آخر فحص في الذاكرة
+        # (لنافذة «عن البرنامج») + تذكر رقم إصدار الشريط المخفي بـ✕ + مؤقت
+        # الفحص الدوري الصامت كل 30 دقيقة — يستدعي نفس دالة الفحص القائمة
+        # في وضع الصمت التام: عند اكتشاف إصدار أحدث يظهر الشريط الأصفر
+        # فوراً دون إعادة تشغيل، وبلا تحديث لا رسائل ولا أي أثر إطلاقاً
+        self.update_last_check_result = None      # لم يُجرَ فحص بعد
+        self.update_bar_dismissed_version = None  # رقم إصدار الشريط المخفي
+        self._update_periodic_after_id = self.after(
+            30 * 60 * 1000, self._update_periodic_check)
+        # ★ إضافة (أرشيف الإصدارات): نقل ملفات main_backup_* القديمة بجوار
+        # البرنامج إلى versions_archive عند بدء التشغيل مرة واحدة بصمت —
+        # يُنظف مجلد البرنامج من فوضى الماضي (والنقل في سجل التدقيق)
+        try:
+            archive_migrate_old_backups()
+        except Exception:
+            pass
         self.style_ttk()
         self.build_sidebar()
 
@@ -2164,6 +2367,19 @@ class App(tk.Tk):
         m.add_command(label="🔑 تغيير كلمة المرور", command=self.change_password_dialog)
         m.add_command(label="💾 نسخة احتياطية الآن", command=self.backup_now)
         m.add_command(label="🔄 تبديل المستخدم", command=self.switch_user)
+        m.add_separator()
+        # ★ إضافة (إصلاح 2): مدخل دائم واضح لنافذة «عن البرنامج» لكل
+        # المستخدمين من قائمة المستخدم — قراءة فقط بلا أي اتصال شبكي
+        m.add_command(label="ℹ️ عن البرنامج", command=self.about_dialog)
+        # ★ إضافة (إصلاح 3 — البند ب): «فحص التحديثات الآن» دائم الظهور
+        # للمدير — فحص فوري برسالة نتيجة عربية دائماً (وللشريط الأصفر زره
+        # الخاص بجانب «تحديث الآن")
+        if self.role == "مدير":
+            m.add_command(label="🔄 فحص التحديثات الآن",
+                          command=lambda: self.update_check_manual(None))
+            # ★ إضافة (أرشيف الإصدارات): عرض أرشيف الإصدارات — للمدير فقط
+            m.add_command(label="🗃️ أرشيف الإصدارات",
+                          command=self.archive_versions_dialog)
         m.add_separator()
         m.add_command(label="⏻ خروج (إغلاق البرنامج)", command=self.exit_app)
         try:
@@ -3904,6 +4120,13 @@ class App(tk.Tk):
         self.user_name = session["name"]
         self.role = session["role"]
         self.user_role = session["role"]
+        # ★ إضافة (إصلاح 1 — بعد تبديل المستخدم): الجلسة الجديدة تبدأ بلا
+        # إخفاء سابق للشريط (حتى يظهر للمستخدم الجديد إن وُجد تحديث)، مع
+        # فحص صامت واحد بعد الدخول بنفس دالة الفحص القائمة نفسها — كما
+        # بعد الدخول عند بدء التشغيل تماماً
+        self.update_bar_dismissed = False
+        self.update_bar_dismissed_version = None
+        self.after(1200, lambda: update_check_silent(self))
         self.cart = []                     # السلة تُفرغ
         if hasattr(self, "e_inv_customer"):
             self.e_inv_customer.delete(0, "end")
@@ -5021,8 +5244,18 @@ class App(tk.Tk):
                 pass
             self.update_bar = None
         ver = getattr(self, "update_available_version", None)
-        if not ver or getattr(self, "update_bar_dismissed", False):
-            return            # لا تحديث معروف، أو أُخفي الشريط لهذه الجلسة
+        if not ver:
+            return            # لا تحديث معروف
+        # ★ إصلاح (1): الشريط الذي أُخفي بـ✕ لا يعود في نفس الجلسة إلا إذا
+        # اكتشف الفحص رقماً أحدث فعلياً من رقم الشريط المخفي — رقم أحدث
+        # واحد يعيده ويجدّد حالة الإخفاء للجلسة من جديد
+        if getattr(self, "update_bar_dismissed", False):
+            dver = getattr(self, "update_bar_dismissed_version", None)
+            if dver and update_is_newer(ver, dver):
+                self.update_bar_dismissed = False
+                self.update_bar_dismissed_version = None
+            else:
+                return        # نفس الرقم المخفي أو أقدم منه — يبقى مخفياً
         upd_bg, upd_fg = "#fef9c3", "#854d0e"
         bar = tk.Frame(self.container, bg=upd_bg, highlightbackground="#fde047",
                        highlightthickness=1)
@@ -5042,6 +5275,16 @@ class App(tk.Tk):
                               bd=0, cursor="hand2", padx=12, pady=2, highlightthickness=0)
             b_now.pack(side="left", padx=(12, 6), pady=3)
             add_tip(b_now, "تنزيل التحديث وتثبيته — يتطلب إعادة تشغيل البرنامج بعد التثبيت")
+            # ★ إضافة (إصلاح 3 — البند أ): زر «فحص التحديثات الآن» داخل
+            # الشريط الأصفر بجانب «تحديث الآن» — فحص فوري بنص الزر «جارٍ
+            # الفحص...» أثناءه ثم رسالة نتيجة عربية دائماً
+            b_chk = tk.Button(bar, text="🔄 فحص التحديثات الآن",
+                              command=lambda: self.update_check_manual(b_chk),
+                              bg="#0369a1", fg="white", activebackground="#0369a1",
+                              activeforeground="white", font=("Segoe UI", 9, "bold"),
+                              bd=0, cursor="hand2", padx=10, pady=2, highlightthickness=0)
+            b_chk.pack(side="left", padx=(0, 6), pady=3)
+            add_tip(b_chk, "فحص فوري جديد الآن برسالة نتيجة — يظهر الشريط فور توفر إصدار أحدث")
             b_x = tk.Button(bar, text="✕", command=self.dismiss_update_bar,
                             bg=upd_bg, fg=upd_fg, activebackground="#fde047",
                             activeforeground=upd_fg, font=("Segoe UI", 8, "bold"),
@@ -5057,6 +5300,10 @@ class App(tk.Tk):
     def dismiss_update_bar(self):
         """(2) زر ✕: إخفاء شريط الإشعار لهذه الجلسة فقط (يعود مع تشغيل جديد)"""
         self.update_bar_dismissed = True
+        # ★ إضافة (إصلاح 1): تذكر رقم إصدار الشريط المخفي — لا يعود الشريط
+        # في نفس الجلسة إلا إذا اكتشف الفحص رقماً أحدث منه فعلياً
+        self.update_bar_dismissed_version = getattr(
+            self, "update_available_version", None)
         if getattr(self, "update_bar", None) is not None:
             try:
                 self.update_bar.destroy()
@@ -5106,6 +5353,7 @@ class App(tk.Tk):
         # القائمة بلا أي فحص شبكي عند الفتح)
         b_about = self.mk_btn(win, "ℹ️ عن البرنامج", self.about_dialog, "#475569")
         b_about.pack(pady=(0, 12))
+        add_tip(b_about, "نبذة عن البرنامج: الإصدار وآخر تحديث ومجلد البيانات — بلا أي اتصال")
         # الحالة الابتدائية: إصدار معروف من الفحص الصامت، أو فحص فوري عند الفتح
         ver = getattr(self, "update_available_version", None)
         if ver:
@@ -5170,11 +5418,93 @@ class App(tk.Tk):
         except Exception:
             pass
 
+    def update_check_manual(self, btn=None):
+        """★ إضافة (إصلاح 3 — البندان أ+ب): «🔄 فحص التحديثات الآن» من
+        الشريط الأصفر أو من قائمة المستخدم — فحص يدوي فوري برسالة نتيجة
+        عربية دائماً: «🔔 يتوفر تحديث جديد — الإصدار [رقم]» مع ظهور الشريط،
+        أو «✅ أنت على أحدث إصدار — الإصدار الحالي [VERSION]»، أو «⚠ تعذر
+        الاتصال — تحقق من الإنترنت وحاول لاحقاً» عند فشل الاتصال — ونص زر
+        الفحص «جارٍ الفحص...» أثناء الفحص ثم يعود لسابقه، وكل فحص يدوي
+        ونتيجته في سجل التدقيق"""
+        if getattr(self, "_manual_check_busy", False):
+            return                      # فحص جارٍ فعلاً — لا ضغط مزدوج
+        self._manual_check_busy = True
+        old_text = None
+        if btn is not None:             # نص الزر «جارٍ الفحص...» ثم يعود
+            try:
+                old_text = btn.cget("text")
+                btn.config(text="جارٍ الفحص...", state="disabled", cursor="watch")
+            except Exception:
+                btn = None
+
+        def _restore():
+            """إعادة زر الفحص لنصه وحالته (بأقصى جهد إن كان الشريط أعيد
+            بناؤه أثناء الفحص) ثم السماح بفحص جديد"""
+            if btn is not None and old_text:
+                try:
+                    btn.config(text=old_text, state="normal", cursor="hand2")
+                except Exception:
+                    pass
+            self._manual_check_busy = False
+
+        box = update_fetch_async(UPDATE_VERSION_URL, UPDATE_CHECK_TIMEOUT)
+
+        def _poll():
+            if box["state"] != "done":
+                try:
+                    self.after(250, _poll)
+                except Exception:
+                    _restore()
+                return
+            remote = update_parse_version(box["data"] or b"")
+            _restore()                  # الزر يعود لسابقه قبل رسالة النتيجة
+            if remote is None:          # فشل الاتصال
+                audit("فحص تحديث يدوي", "تعذر الاتصال — فحص فاشل")
+                messagebox.showwarning("فحص التحديثات",
+                    "⚠ تعذر الاتصال — تحقق من الإنترنت وحاول لاحقاً", parent=self)
+                return
+            if not update_is_newer(remote, VERSION):
+                self.update_available_version = None   # لا تحديث مؤكد الآن
+                self.update_last_check_result = "latest"
+                self.refresh_update_bar()   # إخفاء الشريط والزر إن بقيا من تأكيد سابق
+                audit("فحص تحديث يدوي", f"أحدث إصدار ({VERSION})")
+                messagebox.showinfo("فحص التحديثات",
+                    f"✅ أنت على أحدث إصدار — الإصدار الحالي {VERSION}", parent=self)
+                return
+            self.update_available_version = remote     # تحديث مؤكد → الشريط فوراً
+            self.update_last_check_result = "available"
+            self.refresh_update_bar()
+            audit("فحص تحديث يدوي", f"يتوفر إصدار جديد: {remote}")
+            messagebox.showinfo("فحص التحديثات",
+                f"🔔 يتوفر تحديث جديد — الإصدار {remote}", parent=self)
+
+        try:
+            self.after(250, _poll)
+        except Exception:
+            _restore()
+
+    def _update_periodic_check(self):
+        """★ إضافة (إصلاح 1 — الفحص الدوري): كل 30 دقيقة فحص صامت بنفس دالة
+        الفحص القائمة — عند اكتشاف إصدار أحدث يظهر الشريط الأصفر فوراً دون
+        إعادة تشغيل ولكل الأدوار، وبلا تحديث صمت تام (لا رسائل ولا أي أثر
+        إطلاقاً)، ثم يُعيد جدولة نفسه ما دام البرنامج مفتوحاً"""
+        try:
+            update_check_silent(self, quiet=True)
+        except Exception:
+            pass
+        try:
+            self._update_periodic_after_id = self.after(
+                30 * 60 * 1000, self._update_periodic_check)
+        except Exception:
+            pass          # البرنامج أُغلق — يتوقف المؤقت بهدوء
+
     def update_install(self, win, btn, lbl):
         """(3) خطوات التثبيت الصارمة بالترتيب: (أ) تنزيل إلى ملف مؤقت
         main_new.tmp وليس فوق القديم ← (ب) التحقق من السلامة: حجم أكبر من
-        10 كيلوبايت + يحتوي VERSION + يبدأ بتعليق أو import ← (ج) نسخة أمان
-        من الكود الحالي main_backup_[الإصدار].py ويُحتفظ بآخر 3 ← (د)
+        10 كيلوبايت + يحتوي VERSION + يبدأ بتعليق أو import ← (ج) حفظ
+        النسخة القديمة في أرشيف الإصدارات versions_archive باسم منظم
+        main_v[الإصدار]_[التاريخ].py — سجل تاريخي كامل لا يُحذف منه شيء
+        (★ التعديل المصرح به الوحيد في خطوات التثبيت) ← (د)
         الاستبدال باسم مكتشف ديناميكياً من __file__ ← (هـ) حفظ
         last_update_date + سجل التدقيق ← (و) رسالة إعادة التشغيل وزر
         «إغلاق الآن» — ولو البرنامج EXE فالتحديث يدوي — وأي فشل في أي
@@ -5250,25 +5580,18 @@ class App(tk.Tk):
                 ok = False
             if not ok:
                 _fail("فشل التنزيل — لم يتغير شيء، حاول لاحقاً"); return
-            # (ج) نسخة أمان من الكود الحالي باسم main_backup_[الإصدار].py
-            root, _ext = os.path.splitext(target)
-            bdir = os.path.dirname(target)
-            try:
-                shutil.copy2(target, root + "_backup_" + VERSION + ".py")
-            except Exception:
+            # (ج) ★ تعديل مصرح به (أرشيف الإصدارات): حفظ النسخة القديمة في
+            # مجلد أرشيف الإصدارات versions_archive باسم منظم
+            # main_v[الإصدار]_[التاريخ].py بدل نسخ main_backup_* بجوار
+            # البرنامج — الأرشيف سجل تاريخي كامل لا يُحذف منه أي ملف
+            # تلقائياً أبداً (بدل قاعدة آخر 3)، وفشل الحفظ يلغي التحديث
+            # بأمان كما كان تماماً، وبقية الخطوات (أ/ب/د/هـ/و) كما هي حرفياً
+            saved_archive = archive_save_current()
+            if saved_archive is None:
                 _fail("تعذر إنشاء نسخة الأمان — لم يتغير شيء، حاول لاحقاً"); return
-            try:              # يُحتفظ بآخر 3 نسخ أمان فقط (الحذف بأقصى جهد)
-                olds = sorted(
-                    (p for p in os.listdir(bdir)
-                     if p.startswith(os.path.basename(root) + "_backup_") and p.endswith(".py")),
-                    key=lambda p: os.path.getmtime(os.path.join(bdir, p)), reverse=True)
-                for p in olds[3:]:
-                    try:
-                        os.remove(os.path.join(bdir, p))
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+            audit("أرشيف الإصدارات",
+                  f"حُفظ الإصدار {VERSION} في الأرشيف قبل التحديث إلى "
+                  + str(getattr(self, "update_available_version", "إصدار جديد")))
             # (د) الاستبدال — بعد نجاح كل الفحوص أعلاه فقط
             try:
                 os.replace(tmp, target)
@@ -5307,7 +5630,9 @@ class App(tk.Tk):
         الجلسة، ومجلد البيانات بخط صغير قابل للتحديد مع زر نسخ 📋 للمحفظة"""
         win = self.register_window(tk.Toplevel(self))
         win.title("عن البرنامج")
-        W, H = 420, 520
+        # ★ إصلاح (2): رفع الارتفاع 520 ← 560 فقط — صف «الإصدارات المحفوظة
+        # بالأرشيف» الجديد يحتاج مساحته دون قصّ أي عنصر قائم
+        W, H = 420, 560
         sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
         win.geometry(f"{W}x{H}+{(sw - W) // 2}+{max((sh - H) // 2 - 40, 0)}")
         win.resizable(False, False)
@@ -5371,8 +5696,13 @@ class App(tk.Tk):
         # مؤكد بذاكرة الجلسة = «يتوفر تحديث جديد»، وإلا نتيجة آخر فحص مسجلة
         # في سجل التدقيق القائم («أحدث إصدار») — وإن لم يُجرَ فحص قط أو فشل
         # الفحص الأخير = «—»
+        # ★ إصلاح (2): نتيجة آخر فحص من متغير الذاكرة أولاً (الفحص الدوري
+        # لا يكتب في سجل التدقيق عند غياب تحديث — صمت تام) والنصان
+        # الموحدان: «أحدث إصدار ✅» / «يتوفر تحديث جديد 🔔»
         if getattr(self, "update_available_version", None):
-            state_txt, state_fg = "يتوفر تحديث جديد", ORANGE
+            state_txt, state_fg = "يتوفر تحديث جديد 🔔", ORANGE
+        elif getattr(self, "update_last_check_result", None) == "latest":
+            state_txt, state_fg = "أحدث إصدار ✅", GREEN
         else:
             state_txt, state_fg = "—", GRAY
             try:
@@ -5382,10 +5712,19 @@ class App(tk.Tk):
                         "('فحص تحديث تلقائي', 'فحص تحديث يدوي') "
                         "ORDER BY id DESC LIMIT 1").fetchone()
                 if r and "أحدث إصدار" in str(r["details"]):
-                    state_txt, state_fg = "أحدث إصدار", GREEN
+                    state_txt, state_fg = "أحدث إصدار ✅", GREEN
             except Exception:
                 pass
         info_row("حالة التحديث:", state_txt, state_fg)
+
+        # ★ إضافة (أرشيف الإصدارات — نقطة ربط): عدد الإصدارات المحفوظة
+        # في الأرشيف — يُحسب من ملفات versions_archive فقط (بلا أي اتصال)
+        try:
+            arch_n = archive_count()
+        except Exception:
+            arch_n = 0
+        info_row("الإصدارات المحفوظة بالأرشيف:", str(arch_n),
+                 DARK if arch_n else GRAY)
 
         # (4) تاريخ اليوم والوقت — ساعة حية تتحدث كل ثانية بـ after
         lbl_clock = info_row("تاريخ اليوم والوقت:", "", DARK, ("Segoe UI", 10))
@@ -5441,6 +5780,157 @@ class App(tk.Tk):
                            font=("Segoe UI", 10), bd=1, relief="solid",
                            cursor="hand2", padx=6, pady=2)
         b_copy.pack(side="left", padx=(0, 6))
+
+    def archive_open_folder(self):
+        """★ إضافة (أرشيف الإصدارات): زر «📂 فتح مجلد الأرشيف» — يفتح مجلد
+        versions_archive في مستكشف ملفات ويندوز بنفس نمط زر «فتح مجلد
+        النسخ» القائم تماماً"""
+        try:
+            folder = archive_dir()
+            if os.name == "nt":
+                os.startfile(folder)
+            else:
+                messagebox.showinfo("مجلد أرشيف الإصدارات", folder)
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+            messagebox.showerror("خطأ", f"تعذر فتح مجلد الأرشيف:\n{e}")
+
+    def archive_versions_dialog(self):
+        """★ إضافة (أرشيف الإصدارات): نافذة عرض أرشيف الإصدارات — للمدير
+        فقط: جدول بكل ملفات الأرشيف مرتبة من الأحدث (الاسم | الإصدار |
+        تاريخ الحفظ | الحجم بالكيلوبايت) + زر فتح مجلد الأرشيف في مستكشف
+        ويندوز + زر استعادة أي إصدار بتحذير قوي (تُحفظ النسخة الحالية في
+        الأرشيف أولاً بنفس التسمية قبل أي استبدال — لا فقدان في أي اتجاه)
+        — وكل إجراء في سجل التدقيق"""
+        if not self.require_admin("manager"):
+            return
+        win = self.register_window(tk.Toplevel(self))
+        win.title("أرشيف الإصدارات")
+        W, H = 780, 520
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+        win.geometry(f"{W}x{H}+{max((sw - W) // 2, 0)}+{max((sh - H) // 2 - 30, 0)}")
+        win.resizable(False, False)
+        win.configure(bg=CARD)
+        win.transient(self)
+        try:
+            win.grab_set()
+        except Exception:
+            pass
+        # الرأس بنمط عناوين الشاشات القائم
+        tk.Label(win, text="🗃️", bg=CARD, fg=DARK,
+                 font=("Segoe UI", 24)).pack(pady=(12, 0))
+        tk.Label(win, text="أرشيف الإصدارات", bg=CARD, fg=DARK, font=FT).pack()
+        tk.Label(win, text="سجل تاريخي كامل لكل إصدارات البرنامج المحفوظة — لا يُحذف منه شيء تلقائياً",
+                 bg=CARD, fg=GRAY, font=("Segoe UI", 10)).pack(pady=(0, 4))
+        # جدول الملفات مرتباً من الأحدث إلى الأقدم
+        frm, tv = self.mk_tree(win, ["الاسم", "الإصدار", "تاريخ الحفظ", "الحجم (KB)"],
+                               [340, 90, 150, 90])
+        frm.pack(fill="both", expand=True, padx=18, pady=6)
+        self._archive_rows = []          # مسارات ملفات الأرشيف بترتيب الصفوف
+        lbl_count = tk.Label(win, text="", bg=CARD, fg=GRAY, font=("Segoe UI", 10))
+        lbl_count.pack(pady=(2, 0))
+
+        def load_rows():
+            """قراءة ملفات الأرشيف من جديد وملء الجدول من الأحدث"""
+            tv.delete(*tv.get_children())
+            self._archive_rows = []
+            rows = archive_list_files()          # مرتبة من الأحدث
+            for r in rows:
+                tv.insert("", "end", values=(r["name"], r["version"],
+                                             r["saved"], r["size_kb"]))
+                self._archive_rows.append(r["path"])
+            lbl_count.config(text=f"عدد الإصدارات المحفوظة: {len(rows)}")
+        load_rows()
+        # الأزرار: الاستعادة (الأساسي) ثم فتح المجلد ثم التحديث ثم الإغلاق
+        fr_btns = tk.Frame(win, bg=CARD)
+        fr_btns.pack(pady=(4, 12))
+        b_restore = self.mk_btn(fr_btns, "♻️ استعادة هذا الإصدار",
+                                lambda: self.archive_restore_selected(tv, win, load_rows), ORANGE)
+        b_restore.pack(side="right", padx=6)
+        add_tip(b_restore, "استبدال كود البرنامج الحالي بالنسخة المختارة — "
+                           "تُحفظ النسخة الحالية في الأرشيف أولاً ثم رسالة إعادة التشغيل")
+        b_open = self.mk_btn(fr_btns, "📂 فتح مجلد الأرشيف",
+                             self.archive_open_folder, "#0369a1")
+        b_open.pack(side="right", padx=6)
+        add_tip(b_open, "فتح مجلد أرشيف الإصدارات في مستكشف ملفات ويندوز")
+        b_refresh = self.mk_btn(fr_btns, "🔄 تحديث", load_rows, "#475569")
+        b_refresh.pack(side="right", padx=6)
+        add_tip(b_refresh, "إعادة قراءة ملفات الأرشيف من جديد")
+        b_close = self.mk_btn(fr_btns, "إغلاق", win.destroy, "#475569")
+        b_close.pack(side="right", padx=6)
+        add_tip(b_close, "إغلاق نافذة أرشيف الإصدارات")
+
+    def archive_restore_selected(self, tv, win, reload_rows):
+        """★ إضافة (أرشيف الإصدارات): زر «♻️ استعادة هذا الإصدار» — تحذير
+        قوي بالعربية أن الاستعادة تستبدل كود البرنامج الحالي، ثم تُحفظ
+        النسخة الحالية في الأرشيف أولاً بنفس التسمية المنظمة (لا فقدان في
+        أي اتجاه) قبل استبدال ملف البرنامج بنسخة من الأرشيف (نسخاً لا
+        نقلاً — الأرشيف لا يفقد شيئاً) + رسالة إعادة التشغيل + تسجيل كامل
+        في سجل التدقيق (من استعاد أي إصدار ومتى)"""
+        sel = tv.selection()
+        if not sel:
+            messagebox.showinfo("تنبيه", "اختر إصداراً من الجدول أولاً", parent=win)
+            return
+        try:
+            i = tv.index(sel[0])              # رقم الصف المختار في الجدول
+            path = self._archive_rows[i]
+        except Exception:
+            return
+        name = os.path.basename(path)
+        ver = archive_file_version(path)
+        # نسخة EXE لا تُستعاد تلقائياً: تنبيه يدوي دون أي مساس بالملف
+        if getattr(sys, "frozen", False):
+            messagebox.showinfo("استعادة EXE",
+                "الاستعادة التلقائية لنسخة Python — حدّث EXE يدوياً", parent=win)
+            return
+        # تحذير قوي بالعربية (تأكيد مزدوج) — الاستعادة تستبدل الكود الحالي
+        warn = ("⚠️ تحذير هام ⚠️\n\n"
+                "الاستعادة ستستبدل كود البرنامج الحالي بالكامل بالنسخة المختارة:\n"
+                f"{name}  (الإصدار {ver})\n\n"
+                "ستفقد كل تحسينات الإصدارات الأحدث من هذا الإصدار.\n"
+                "سيُحفظ الكود الحالي أولاً في الأرشيف تلقائياً قبل الاستبدال — "
+                "لا فقدان في أي اتجاه.\n"
+                "بياناتك وتقاريرك لا تُمس نهائياً (محفوظة في قاعدة بيانات منفصلة).\n\n"
+                "هل أنت متأكد من المتابعة؟")
+        if not messagebox.askyesno("تأكيد الاستعادة (1 من 2)", warn, parent=win):
+            return
+        if not messagebox.askyesno("تأكيد الاستعادة (2 من 2)",
+                "تأكيد أخير:\nهل تريد فعلاً استبدال كود البرنامج الحالي بهذه النسخة الآن؟",
+                parent=win):
+            return
+        # 1) حفظ الكود الحالي في الأرشيف أولاً — بنفس التسمية المنظمة
+        saved = archive_save_current()
+        if saved is None:
+            messagebox.showerror("فشلت الاستعادة",
+                "تعذر حفظ النسخة الحالية في الأرشيف قبل الاستعادة —\n"
+                "لم يتغير شيء إطلاقاً، حاول لاحقاً.", parent=win)
+            return
+        # 2) الاستبدال بنسخة من ملف الأرشيف (نسخ لا نقل — الأرشيف لا يفقد شيئاً)
+        try:
+            target = os.path.abspath(__file__)
+            if not os.path.isfile(target):
+                raise Exception("تعذر تحديد موقع ملف البرنامج")
+            shutil.copy2(path, target)
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+            messagebox.showerror("فشلت الاستعادة",
+                "تعذر استبدال ملف البرنامج:\n" + str(e) +
+                "\n\nلم يتغير شيء (راجع error_log.txt).", parent=win)
+            return
+        # 3) تسجيل كامل في سجل التدقيق + رسالة إعادة التشغيل
+        audit("أرشيف الإصدارات",
+              f"استعادة إصدار {ver} ({name}) — حُفظ الكود الحالي أولاً باسم "
+              + os.path.basename(saved))
+        try:
+            reload_rows()
+        except Exception:
+            pass
+        messagebox.showinfo("تمت الاستعادة ✅",
+            "استُبدل كود البرنامج بالنسخة المختارة بنجاح.\n"
+            "حُفظ الكود السابق في الأرشيف باسم:\n" + os.path.basename(saved) +
+            "\n\n⚠ أغلق البرنامج الآن وافتحه من جديد لتفعيل الإصدار المستعاد.",
+            parent=win)
+        self.exit_app()      # إغلاق البرنامج — يجب إعادة تشغيله بعد الاستعادة
 
 
 # ═══════════════════════════════════════════════════════════
