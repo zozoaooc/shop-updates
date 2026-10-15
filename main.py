@@ -226,6 +226,7 @@ from tkinter import ttk, messagebox, filedialog
 import os, sys, traceback
 import time   # ★ إضافة (الإصدار 14 — البند 9): قفل الدخول المؤقت بعد 5 محاولات فاشلة (60 ثانية)
 import sqlite3, csv, shutil
+import subprocess   # ★ إضافة (الإصدار 15 — الجزء الثاني): إطلاق النسخة الجديدة من البرنامج بعد التحديث وقبل الخروج النظيف
 from datetime import date, datetime
 
 # ★ إضافة (ميزات 1+3): مكتبات قياسية إضافية — التشفير وتصدير Excel وتهريب XML
@@ -277,9 +278,13 @@ except Exception:
 import urllib.request   # ★ إضافة (إصدار 10): جلب التحديث — المكتبة القياسية وحدها
 import threading        # ★ إضافة (إصدار 10): فحص خلفي لا يجمّد الواجهة أبداً
 
-VERSION = "2.4"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
+VERSION = "2.5"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
 UPDATE_VERSION_URL = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/version.txt"
 UPDATE_FILE_URL    = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/main.py"
+# ★ إضافة (الإصدار 15 — الجزء الثاني): ملاحظات الإصدارات (changelog) —
+# يعرضها زر «📄 ما الجديد؟» في نافذة الموافقة إن وُجد الملف في المصدر،
+# وغيابه رسالة لطيفة — جلب نص فقط بلا أي تنزيل لملف البرنامج أبداً
+UPDATE_CHANGELOG_URL = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/changelog.txt"
 GITHUB_TOKEN = "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"   # يملؤه المالك يدوياً عند تغييره
 # عند توفر التوكن: كل طلب يضيف الترويسة Authorization: Bearer {GITHUB_TOKEN}
 # وعند فراغه: يجرّب بدون ترويسة — والفشل في الحالتين صمت تام
@@ -2064,6 +2069,72 @@ def update_is_newer(remote, local):
     except Exception:
         return False                     # غير قابل للمقارنة = ليس أحدث
 
+def place_window(win, w=None, h=None, min_w=None, min_h=None, can_resize=False):
+    """★ إضافة (الإصدار 15 — الجزء الأول): القاعدة الذهبية لضبط النوافذ
+    المنبثقة — تُستدعى في نهاية بناء أي نافذة Toplevel بعد اكتمال محتواها:
+    (1) تمركز وسط الشاشة دائماً (winfo_screenwidth / winfo_screenheight)
+    (2) شاشة أصغر من الحجم المطلوب: النافذة = الشاشة − 80 بكسل كحد أقصى
+        فتبقى الأزرار السفلية ظاهرة والجدول يتمدد داخله بتمريره الخاص
+    (3) الفحص الذاتي: إن طلب المحتوى (winfo_reqheight) ارتفاعاً أكبر من
+        النافذة تُرفع الأبعاد تلقائياً — لا قصّ للأزرار السفلية أبداً
+    (4) minsize لا يُصغَّر تحته إلى إخفاء الأزرار (ضمن حدود الشاشة)
+    البعد الغائب يُحسب من المحتوى ذاته — وأي خلل يُتجاهل بهدوء"""
+    try:
+        win.update_idletasks()
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+        max_w, max_h = max(400, sw - 80), max(300, sh - 80)
+        rh = win.winfo_reqheight()
+        if h is None:                       # الارتفاع الغائب: من المحتوى ذاته
+            h = rh if rh else 300
+        h = max(h, rh if rh else 0)         # الفحص الذاتي: لا قصّ أبداً
+        h = min(h, max_h)                   # سقف الشاشة − 80
+        if w:
+            w = min(w, max_w)
+        if min_w or min_h:
+            win.minsize(min(min_w or 200, max_w), min(min_h or 200, max_h))
+        if can_resize:
+            win.resizable(True, True)
+        win.geometry(f"{w}x{h}" if w else f"{max_w}x{h}")
+        win.update_idletasks()
+        fw, fh = win.winfo_width(), win.winfo_height()
+        win.geometry(f"+{max((sw - fw) // 2, 0)}+{max((sh - fh) // 2, 0)}")
+    except Exception:
+        pass
+
+
+def update_changelog_section(raw, ver):
+    """★ إضافة (الإصدار 15 — الجزء الثاني): استخراج ملاحظات إصدار بعينه من
+    محتوى changelog.txt — القسم يبدأ بسطر أول كلمته رقم الإصدار («2.5:» أو
+    «2.5 — ...» أو «## 2.5») وينتهي عند بداية قسم إصدار أحدث، ويُتجاهل ما
+    قبله؛ يرجع نص الملاحظات أو None عند غياب الملف أو غياب القسم"""
+    if not raw:
+        return None
+    try:
+        text = raw.decode("utf-8")
+    except Exception:
+        return None
+
+    def _head_version(line):
+        s = line.strip().lstrip("#*-—• ").rstrip()
+        if not s:
+            return None
+        head = s.split()[0].rstrip(":：،,-—()[]")
+        return head if head and "." in head and head.replace(".", "").isdigit() else None
+
+    sec, inside = [], False
+    for l in text.splitlines():
+        hv = _head_version(l)
+        if hv is not None:                  # سطر بداية قسم إصدار
+            if inside:
+                break                       # قسم إصدار أحدث بدأ — انتهى قسمنا
+            inside = (hv == str(ver))
+            continue
+        if inside and l.strip():
+            sec.append(l.rstrip())
+    body = "\n".join(sec).strip()
+    return body or None
+
+
 def update_check_silent(app, quiet=False):
     """(1) الفحص التلقائي الصامت بعد الدخول مباشرة — لا يبطئ الفتح ولا
     يظهر شيئاً أثناءه: يجلب رقم الإصدار بمهلة 5 ثوانٍ، وأي فشل صمت تام
@@ -3145,9 +3216,13 @@ class App(tk.Tk):
             return
         win = self.register_window(tk.Toplevel(self))
         win.title("🗑 سلة المحذوفات")
-        win.geometry("1000x580")
         win.configure(bg=CARD)
-        win.resizable(False, False)
+        # ★ تعديل مصرح به (الإصدار 15 — الجزء الأول — القاعدة الذهبية): شريط
+        # الأزرار السفلي يُحزم أولاً side="bottom" قبل أي شيء آخر فلا يُدفع
+        # خارج النافذة أبداً مهما طال الجدول — والأزرار تُنشأ فيه لاحقاً بعد
+        # تعريف دوالها، ثم العنوان، والجدول يتمدد fill="both" expand=True
+        fr_btns = tk.Frame(win, bg=CARD)
+        fr_btns.pack(side="bottom", fill="x", pady=(4, 12))
         tk.Label(win, text="🗑 سلة المحذوفات", bg=CARD, fg=DARK, font=FT).pack(pady=(14, 2))
         tk.Label(win, text="كل عملية حُذفت تُنسخ هنا كاملة — تُستعاد بأمر واحد ولا يُحتفظ بآخر 50 فقط",
                  bg=CARD, fg=GRAY, font=("Segoe UI", 10)).pack(pady=(0, 8))
@@ -3159,10 +3234,12 @@ class App(tk.Tk):
         # ★ إضافة (الإصدار 14 — البندان 5+6): فرز الرؤوس + الصفوف المتناوبة
         enable_tree_sorting(tv)
         config_tree_stripes(tv)
+        # ★ تعديل مصرح به (الإصدار 15 — الجزء الأول): العدّادات تُحزم
+        # side="bottom" فوق شريط الأزرار مباشرة — ظاهرة دائماً فوقه
         lbl_empty = tk.Label(win, text="", bg=CARD, fg=GRAY, font=("Segoe UI", 10, "bold"))
-        lbl_empty.pack(pady=(2, 0))
+        lbl_empty.pack(side="bottom", pady=(2, 0))
         lbl_count = tk.Label(win, text="", bg=CARD, fg=GRAY, font=("Segoe UI", 10))
-        lbl_count.pack(pady=(2, 0))
+        lbl_count.pack(side="bottom", pady=(2, 0))
         add_tip(tv, "انقر رأس أي عمود للفرز — والنقر المزدوج على أي صف يستعيده")
 
         def fill():
@@ -3208,8 +3285,6 @@ class App(tk.Tk):
             self.lbl_status.config(text="♻️ تمت استعادة العملية المحذوفة — جدول العمليات تحدّث", fg=GREEN)
 
         tv.bind("<Double-1>", restore_selected)
-        fr_btns = tk.Frame(win, bg=CARD)
-        fr_btns.pack(pady=(4, 12))
         b_res = self.mk_btn(fr_btns, "♻️ استعادة المحدد", restore_selected, "#0d9488")
         b_res.pack(side="right", padx=6)
         add_tip(b_res, "إعادة الصف المحدد إلى جدول العمليات بنفس بياناته الأصلية كاملة")
@@ -3219,6 +3294,9 @@ class App(tk.Tk):
         b_close = self.mk_btn(fr_btns, "إغلاق", win.destroy, "#475569")
         b_close.pack(side="right", padx=6)
         add_tip(b_close, "إغلاق نافذة سلة المحذوفات")
+        # ★ إضافة (الإصدار 15 — الجزء الأول): نافذة طويلة 1000×620 + minsize
+        # + تمدد كامل + تمركز وسط الشاشة مع احترام الشاشات الصغيرة
+        place_window(win, 1000, 620, 880, 540, can_resize=True)
 
     def close_day(self):
         # ★ تعديل مصرح به (إصدار 8 — الميزة 5): صلاحية «إغلاق اليوم» بدل «المدير فقط»
@@ -3367,9 +3445,6 @@ class App(tk.Tk):
         box = {"choice": "cancel"}
         win = self.register_window(tk.Toplevel(self))
         win.title("يوم العمل المفتوح")
-        W, H = 500, 330
-        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-        win.geometry(f"{W}x{H}+{max((sw - W) // 2, 0)}+{max((sh - H) // 2 - 30, 0)}")
         win.resizable(False, False)
         win.configure(bg=BG)
         win.transient(self)
@@ -3378,7 +3453,12 @@ class App(tk.Tk):
         except Exception:
             pass
         card = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
-        card.place(in_=win, relx=0.5, rely=0.5, anchor="c", width=440, height=270)
+        # ★ تعديل مصرح به (الإصدار 15 — الجزء الأول): بطاقة أعلى (440×320) كي
+        # تظهر أزرارها الثلاثة كاملة، وشريط الأزرار يُحزم side="bottom" أولاً
+        # داخلها (القاعدة الذهبية) فلا يُقص أبداً
+        card.place(in_=win, relx=0.5, rely=0.5, anchor="c", width=440, height=320)
+        fr = tk.Frame(card, bg=CARD)
+        fr.pack(side="bottom", pady=4)
         tk.Label(card, text="🌙", bg=CARD, fg=DARK, font=("Segoe UI", 24)).pack(pady=(14, 0))
         tk.Label(card, text="يوم العمل المفتوح أقدم من تاريخ اليوم", bg=CARD, fg=DARK,
                  font=FT).pack(pady=(0, 6))
@@ -3388,13 +3468,15 @@ class App(tk.Tk):
         def pick(c):
             box["choice"] = c
             win.destroy()
-        fr = tk.Frame(card, bg=CARD); fr.pack(pady=4)
         self.mk_btn(fr, "🔒 إغلاقه الآن كتقرير", lambda: pick("close"), ORANGE).pack(
             side="top", pady=4, ipadx=10)
         self.mk_btn(fr, "🌙 الاستمرار عليه (بعد منتصف الليل)", lambda: pick("continue"), ACCENT).pack(
             side="top", pady=4, ipadx=10)
         self.mk_btn(fr, "✖ إلغاء الدخول", lambda: pick("cancel"), "#475569").pack(
             side="top", pady=4, ipadx=10)
+        # ★ إضافة (الإصدار 15 — الجزء الأول): تمركز وسط الشاشة + احترام
+        # الشاشات الصغيرة (الشاشة − 80) — البطاقة 440×320 داخل 520×380
+        place_window(win, 520, 380)
         win.protocol("WM_DELETE_WINDOW", lambda: pick("cancel"))
         win.wait_window(win)
         return box["choice"]
@@ -3436,9 +3518,6 @@ class App(tk.Tk):
         result = {"d": None}
         win = self.register_window(tk.Toplevel(self))
         win.title("بدء يوم عمل جديد")
-        W, H = 440, 300
-        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-        win.geometry(f"{W}x{H}+{max((sw - W) // 2, 0)}+{max((sh - H) // 2 - 30, 0)}")
         win.resizable(False, False)
         win.configure(bg=BG)
         win.transient(self)
@@ -3447,7 +3526,12 @@ class App(tk.Tk):
         except Exception:
             pass
         card = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
-        card.place(in_=win, relx=0.5, rely=0.5, anchor="c", width=390, height=250)
+        # ★ تعديل مصرح به (الإصدار 15 — الجزء الأول): بطاقة أكبر (410×310) كي
+        # يظهر زرا التأكيد كاملين، وشريط الأزرار يُحزم side="bottom" أولاً
+        # داخلها (القاعدة الذهبية) فلا يُقص أبداً
+        card.place(in_=win, relx=0.5, rely=0.5, anchor="c", width=410, height=310)
+        fr = tk.Frame(card, bg=CARD)
+        fr.pack(side="bottom", pady=(6, 10))
         tk.Label(card, text="▶️", bg=CARD, fg=DARK, font=("Segoe UI", 24)).pack(pady=(12, 0))
         tk.Label(card, text="بدء يوم عمل جديد", bg=CARD, fg=DARK, font=FT).pack(pady=(0, 4))
         tk.Label(card, text="تاريخ يوم العمل الذي ستُسجَّل عليه العمليات:", bg=CARD, fg=GRAY,
@@ -3471,11 +3555,13 @@ class App(tk.Tk):
             win.destroy()
         def do_cancel():
             win.destroy()
-        fr = tk.Frame(card, bg=CARD); fr.pack(pady=(6, 10))
         self.mk_btn(fr, "✅ بدء اليوم", do_ok, GREEN).pack(side="right", padx=6)
         self.mk_btn(fr, "إلغاء", do_cancel, "#475569").pack(side="right", padx=6)
         e_date.bind("<Return>", lambda _e: do_ok())
         e_date.focus_set()
+        # ★ إضافة (الإصدار 15 — الجزء الأول): تمركز وسط الشاشة + احترام
+        # الشاشات الصغيرة (الشاشة − 80) — البطاقة 410×310 داخل 460×360
+        place_window(win, 460, 360)
         win.protocol("WM_DELETE_WINDOW", do_cancel)
         win.wait_window(win)
         return result["d"]
@@ -3647,7 +3733,13 @@ class App(tk.Tk):
         # (تُغلق تلقائياً عند تبديل المستخدم)
         win = self.register_window(tk.Toplevel(self))
         win.title(f"تقرير يوم {d}")
-        win.geometry("1010x560"); win.configure(bg=BG)   # ★ (إصدار 3): توسعة بسيطة لاستيعاب عمود البائع
+        # ★ تعديل مصرح به (الإصدار 15 — الجزء الأول — القاعدة الذهبية): شريط
+        # أزرار الإجراءات السفلي يُحزم أولاً side="bottom" قبل أي شيء آخر فلا
+        # يُقص أبداً مهما طال الجدول — والأزرار تُنشأ فيه لاحقاً كالمعتاد،
+        # والعنوان فوقه ثم البطاقات ثم الجدول يتمدد fill="both" expand=True
+        bar = tk.Frame(win, bg=BG)
+        bar.pack(side="bottom", fill="x", padx=20, pady=(0, 15))
+        win.configure(bg=BG)   # ★ (إصدار 3): توسعة بسيطة لاستيعاب عمود البائع
         tk.Label(win, text=f"📄 تقرير يوم {d}  ({day_name(d)})", bg=BG, fg=DARK, font=FT).pack(pady=12)
         # ★ إضافة (إصدار 3 — ميزة 4): ملاحظة للبائع أنه يرى عملياته فقط
         # ★ تعديل مصرح به (الإصدار 14 — الجزء صفر): الملاحظة للبائع فقط —
@@ -3683,7 +3775,6 @@ class App(tk.Tk):
                         (r["customer_name"] or ""),
                         (r["seller_name"] or "—"), r["date"]))   # ★ ميزة 3+5 (إصدار 3): عمودا العميل والبائع
 
-        bar = tk.Frame(win, bg=BG); bar.pack(pady=(0, 15))
         self.mk_btn(bar, "📥 تصدير CSV", lambda: self.export_ops_csv(d, rows, rep), GREEN).pack(side="right", padx=6)
         # ★ إضافة (ميزة 3): زر تصدير هذا اليوم إلى Excel حقيقي
         self.mk_btn(bar, "📊 تصدير Excel", lambda: self.export_day_xlsx(d, rows, rep), "#0d9488").pack(side="right", padx=6)
@@ -3724,6 +3815,9 @@ class App(tk.Tk):
                     add_tip(w, "تصدير تفاصيل هذا اليوم إلى Excel")
                 elif t == "إغلاق":
                     add_tip(w, "إغلاق نافذة التفاصيل")
+        # ★ إضافة (الإصدار 15 — الجزء الأول): نافذة طويلة 1010×660 + minsize
+        # + تمدد كامل + تمركز وسط الشاشة مع احترام الشاشات الصغيرة
+        place_window(win, 1010, 660, 880, 560, can_resize=True)
 
     def show_day_details_menu(self, d, rows, rep, btn):
         """★ إضافة (إصدار 8 — الميزة 4): قائمة إجراءات نافذة تفاصيل اليوم —
@@ -4306,9 +4400,14 @@ class App(tk.Tk):
         # ★ إضافة (إصدار 8 — الميزة 3): تسجيل النافذة في التتبع المركزي
         win = self.register_window(tk.Toplevel(self))
         win.title("تغيير كلمة المرور")
-        win.geometry("420x380"); win.configure(bg=BG); win.resizable(False, False)
+        win.configure(bg=BG); win.resizable(False, False)
         card = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
         card.pack(fill="both", expand=True, padx=20, pady=16)
+        # ★ تعديل مصرح به (الإصدار 15 — الجزء الأول — القاعدة الذهبية): زر
+        # الحفظ يُحزم side="bottom" أولاً داخل البطاقة فلا يُقص أبداً مهما
+        # طال المحتوى — وبقية الحقول فوقه، والارتفاع من المحتوى ذاتياً
+        fr_save = tk.Frame(card, bg=CARD)
+        fr_save.pack(side="bottom", fill="x", pady=(8, 12))
         tk.Label(card, text="🔑 تغيير كلمة المرور", bg=CARD, fg=DARK, font=FT).pack(pady=(14, 4))
         # ★ إضافة (إصدار 3 — ميزة 7): إظهار الحساب الحالي الذي ستُغيّر كلمة مروره
         tk.Label(card, text=f"الحساب الحالي: {self.user_name}", bg=CARD, fg=GRAY,
@@ -4352,7 +4451,10 @@ class App(tk.Tk):
             messagebox.showinfo("تم", "تم تغيير كلمة المرور بنجاح", parent=win)
             win.destroy()
 
-        self.mk_btn(card, "💾 حفظ", do_change, ACCENT).pack(pady=12)
+        self.mk_btn(fr_save, "💾 حفظ", do_change, ACCENT).pack()
+        # ★ إضافة (الإصدار 15 — الجزء الأول): تمركز وسط الشاشة + ارتفاع من
+        # المحتوى (فحص ذاتي) + احترام الشاشات الصغيرة — لا قصّ للأزرار أبداً
+        place_window(win, 420)
 
     # ---------- (ميزة 4) التصفية بالمدى ----------
     def filter_archive(self):
@@ -4527,9 +4629,14 @@ class App(tk.Tk):
         # ★ تعديل ضروري معلن (إصدار 8 — الميزة 5): النافذة أصبحت «إضافة مستخدم»
         # وتوسّعت لاستيعاب اختيار الدور وصندوق الصلاحيات (كانت لإضافة بائع فقط)
         win.title("إضافة مستخدم")
-        win.geometry("430x720"); win.configure(bg=BG); win.resizable(False, False)
+        win.configure(bg=BG); win.resizable(False, False)
         card = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
         card.pack(fill="both", expand=True, padx=20, pady=16)
+        # ★ تعديل مصرح به (الإصدار 15 — الجزء الأول — القاعدة الذهبية): زر
+        # الحفظ يُحزم side="bottom" أولاً داخل البطاقة فلا يُقص أبداً مهما
+        # طال نموذج الصلاحيات — والارتفاع من المحتوى ذاتياً بسقف الشاشة − 80
+        fr_save = tk.Frame(card, bg=CARD)
+        fr_save.pack(side="bottom", fill="x", pady=(8, 12))
         # ★ تعديل ضروري معلن (إصدار 8 — الميزة 5): العنوان أصبح «إضافة مستخدم»
         tk.Label(card, text="➕ إضافة مستخدم", bg=CARD, fg=DARK, font=FT).pack(pady=(14, 10))
 
@@ -4626,7 +4733,10 @@ class App(tk.Tk):
             win.destroy()
 
         e_con.bind("<Return>", lambda e: do_add())
-        self.mk_btn(card, "💾 حفظ", do_add, GREEN).pack(pady=12)
+        self.mk_btn(fr_save, "💾 حفظ", do_add, GREEN).pack()
+        # ★ إضافة (الإصدار 15 — الجزء الأول): تمركز وسط الشاشة + ارتفاع من
+        # المحتوى (فحص ذاتي) + احترام الشاشات الصغيرة — لا قصّ للأزرار أبداً
+        place_window(win, 430)
 
     def edit_permissions_dialog(self):
         """★ إضافة (إصدار 8 — الميزة 5): تعديل صلاحيات المستخدم المحدد — عشر
@@ -4650,9 +4760,14 @@ class App(tk.Tk):
         # ★ إضافة (إصدار 8 — الميزة 3): تسجيل النافذة في التتبع المركزي
         win = self.register_window(tk.Toplevel(self))
         win.title("تعديل الصلاحيات")
-        win.geometry("520x660"); win.configure(bg=BG); win.resizable(False, False)
+        win.configure(bg=BG); win.resizable(False, False)
         card = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
         card.pack(fill="both", expand=True, padx=20, pady=16)
+        # ★ تعديل مصرح به (الإصدار 15 — الجزء الأول — القاعدة الذهبية): زر
+        # حفظ الصلاحيات يُحزم side="bottom" أولاً داخل البطاقة فلا يُقص أبداً
+        # — والارتفاع من المحتوى ذاتياً بسقف الشاشة − 80
+        fr_save = tk.Frame(card, bg=CARD)
+        fr_save.pack(side="bottom", fill="x", pady=(8, 12))
         tk.Label(card, text="✏️ تعديل الصلاحيات", bg=CARD, fg=DARK, font=FT).pack(pady=(14, 2))
         tk.Label(card, text=f"المستخدم: {urow['username']} ({urow['role']})",
                  bg=CARD, fg=GRAY, font=("Segoe UI", 10)).pack(pady=(0, 8))
@@ -4696,7 +4811,10 @@ class App(tk.Tk):
             self.refresh_users()
             win.destroy()
 
-        self.mk_btn(card, "💾 حفظ الصلاحيات", do_save_perms, "#0d9488").pack(pady=12)
+        self.mk_btn(fr_save, "💾 حفظ الصلاحيات", do_save_perms, "#0d9488").pack()
+        # ★ إضافة (الإصدار 15 — الجزء الأول): تمركز وسط الشاشة + ارتفاع من
+        # المحتوى (فحص ذاتي) + احترام الشاشات الصغيرة — لا قصّ للأزرار أبداً
+        place_window(win, 520)
 
     def reset_password_dialog(self):
         """★ إضافة (إصدار 3 — ميزة 5): إعادة تعيين كلمة مرور أي مستخدم — للمدير فقط من هنا"""
@@ -4717,9 +4835,14 @@ class App(tk.Tk):
         # ★ إضافة (إصدار 8 — الميزة 3): تسجيل النافذة في التتبع المركزي
         win = self.register_window(tk.Toplevel(self))
         win.title("إعادة تعيين كلمة المرور")
-        win.geometry("430x310"); win.configure(bg=BG); win.resizable(False, False)
+        win.configure(bg=BG); win.resizable(False, False)
         card = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
         card.pack(fill="both", expand=True, padx=20, pady=16)
+        # ★ تعديل مصرح به (الإصدار 15 — الجزء الأول — القاعدة الذهبية): زر
+        # الحفظ يُحزم side="bottom" أولاً داخل البطاقة فلا يُقص أبداً —
+        # والارتفاع من المحتوى ذاتياً (كان 310 ثابتاً)
+        fr_save = tk.Frame(card, bg=CARD)
+        fr_save.pack(side="bottom", fill="x", pady=(8, 12))
         tk.Label(card, text="🔑 إعادة تعيين كلمة المرور", bg=CARD, fg=DARK, font=FT).pack(pady=(14, 4))
         tk.Label(card, text=f"المستخدم: {row['username']} ({row['role']})", bg=CARD, fg=GRAY,
                  font=("Segoe UI", 10)).pack(pady=(0, 8))
@@ -4751,7 +4874,10 @@ class App(tk.Tk):
             win.destroy()
 
         e_con.bind("<Return>", lambda e: do_reset())
-        self.mk_btn(card, "💾 حفظ", do_reset, ACCENT).pack(pady=12)
+        self.mk_btn(fr_save, "💾 حفظ", do_reset, ACCENT).pack()
+        # ★ إضافة (الإصدار 15 — الجزء الأول): تمركز وسط الشاشة + ارتفاع من
+        # المحتوى (فحص ذاتي) + احترام الشاشات الصغيرة — لا قصّ للأزرار أبداً
+        place_window(win, 430)
 
     def toggle_user_active(self):
         """★ إضافة (إصدار 3 — ميزة 5): إيقاف/تفعيل حساب —
@@ -6035,7 +6161,12 @@ class App(tk.Tk):
         # ★ إضافة (إصدار 8 — الميزة 3): تسجيل نافذة المعاينة في التتبع المركزي
         win = self.register_window(tk.Toplevel(self))
         win.title("👁️ معاينة قبل الطباعة")
-        win.geometry("900x700"); win.configure(bg=BG)
+        # ★ تعديل مصرح به (الإصدار 15 — الجزء الأول — القاعدة الذهبية): شريط
+        # أزرار الطباعة السفلي يُحزم أولاً side="bottom" قبل الترويسة والمحتوى
+        # فلا يُقص أبداً — والأزرار تُنشأ فيه في نهاية الدالة كالمعتاد
+        bar = tk.Frame(win, bg=BG)
+        bar.pack(side="bottom", fill="x", padx=22, pady=(4, 16))
+        win.configure(bg=BG)
 
         # ترويسة المعاينة — كما ستُطبع تماماً: اسم المحل والعنوان والتاريخ
         head = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
@@ -6088,9 +6219,7 @@ class App(tk.Tk):
                                 f"المرتجعات: {money(t_rets)} — عدد العمليات: {t_ops}",
                      bg=BG, fg=GRAY, font=("Segoe UI", 10, "bold")).pack(pady=(0, 4))
 
-        # أزرار الطباعة الثلاثة أسفل المعاينة
-        bar = tk.Frame(win, bg=BG)
-        bar.pack(fill="x", padx=22, pady=(4, 16))
+        # أزرار الطباعة الثلاثة أسفل المعاينة (شريطها محزوم أسفل النافذة أولاً)
         b_a4 = self.mk_btn(bar, "🖨 طباعة A4 (PDF)",
                            lambda: self._preview_print_a4(kind, data), "#1d4ed8")
         b_a4.pack(side="right", padx=6)
@@ -6102,6 +6231,9 @@ class App(tk.Tk):
         b_cancel = self.mk_btn(bar, "❌ إلغاء", win.destroy, "#475569")
         b_cancel.pack(side="right", padx=6)
         add_tip(b_cancel, "إغلاق نافذة المعاينة دون طباعة")
+        # ★ إضافة (الإصدار 15 — الجزء الأول): نفس الحجم 900×700 + minsize
+        # + تمدد صريح + تمركز وسط الشاشة مع احترام الشاشات الصغيرة
+        place_window(win, 900, 700, 760, 560, can_resize=True)
 
     def _preview_print_a4(self, kind, data):
         """★ إضافة (إصدار 7 — الميزة 6+7): تنفيذ طباعة A4 من المعاينة — ملف
@@ -6235,7 +6367,7 @@ class App(tk.Tk):
                               activeforeground="white", font=("Segoe UI", 9, "bold"),
                               bd=0, cursor="hand2", padx=12, pady=2, highlightthickness=0)
             b_now.pack(side="left", padx=(12, 6), pady=3)
-            add_tip(b_now, "تنزيل التحديث وتثبيته — يتطلب إعادة تشغيل البرنامج بعد التثبيت")
+            add_tip(b_now, "عرض تفاصيل التحديث والموافقة الصريحة على تثبيته — إعادة التشغيل تلقائية بعد التثبيت")
             # ★ إضافة (إصلاح 3 — البند أ): زر «فحص التحديثات الآن» داخل
             # الشريط الأصفر بجانب «تحديث الآن» — فحص فوري بنص الزر «جارٍ
             # الفحص...» أثناءه ثم رسالة نتيجة عربية دائماً
@@ -6273,60 +6405,137 @@ class App(tk.Tk):
             self.update_bar = None
 
     def update_now_dialog(self):
-        """(3) نافذة التحديث — للمدير فقط: «يتوفر تحديث جديد — يتطلب إعادة
-        تشغيل بعد التثبيت. التحديث لا يلمس بياناتك والتقارير نهائياً.
-        تثبيت الآن؟» + زر «🔄 فحص التحديثات الآن»، وعند التثبيت تُنفّذ
-        الخطوات الصارمة بالترتيب مع إلغاء آمن عند أي فشل"""
+        """(3) ★ تعديل مصرح به (الإصدار 15 — الجزء الثاني): نافذة الموافقة
+        الصريحة على التحديث — للمدير فقط: تعرض «الإصدار الحالي [VERSION] ←
+        الجديد [رقم]» وزر «📄 ما الجديد؟» (ملاحظات الإصدار إن وُجدت) وسطر
+        الطمأنة أن التحديث لا يلمس البيانات والتقارير، ولا يبدأ التنزيل
+        والتثبيت إلا بضغط «✅ نعم، ثبّت التحديث الآن» الصريح — و«❌ لا،
+        لاحقاً» أو إغلاق النافذة لا يفعلان شيئاً ويبقى شريط الإشعار للموافقة
+        لاحقاً. وإن كانت السلة فيها أصناف غير محفوظة يُعطَّل زر التثبيت حتى
+        تأكيد تحذير فقدانها (نفس منطق تبديل المستخدم). زرا «🔄 فحص
+        التحديثات الآن» و«ℹ️ عن البرنامج» كما كانا تماماً، وعند الموافقة
+        تُنفّذ خطوات التثبيت الصارمة بالترتيب مع إلغاء آمن عند أي فشل"""
         if not self.require_admin("manager"):
             return
         win = self.register_window(tk.Toplevel(self))
         win.title("تحديث البرنامج")
-        win.geometry("460x310")
-        win.resizable(False, False)
         win.configure(bg=CARD)
         win.transient(self)
         try:
             win.grab_set()
         except Exception:
             pass
+        # ★ تعديل مصرح به (الإصدار 15 — الجزء الأول — القاعدة الذهبية): شريط
+        # أزرار الموافقة السفلي يُحزم أولاً side="bottom" فلا يُقص أبداً
+        fr_btns = tk.Frame(win, bg=CARD)
+        fr_btns.pack(side="bottom", fill="x", pady=(8, 14))
+        # ★ إضافة (الإصدار 15 — الجزء الثاني): تحذير السلة داخل نافذة
+        # الموافقة — يُحزم side="bottom" فوق شريط الأزرار مباشرة
+        cart_n = len(getattr(self, "cart", None) or [])
+        lbl_cart = tk.Label(win, text="", bg=CARD, fg=RED,
+                            font=("Segoe UI", 10, "bold"),
+                            wraplength=430, justify="center")
+        if cart_n:
+            lbl_cart.config(text=f"⚠ السلة فيها {cart_n} أصناف غير محفوظة — "
+                                 "ستُفقد بعد التحديث وإعادة التشغيل")
+            lbl_cart.pack(side="bottom", fill="x", padx=14, pady=(0, 4))
+        # الرأس ثم المحتوى — كل شيء فوق الشريط السفلي الثابت
         tk.Label(win, text="⬇️", bg=CARD, fg=DARK, font=("Segoe UI", 26)).pack(pady=(14, 0))
         lbl = tk.Label(win, text="", bg=CARD, fg=DARK, font=FT,
-                       wraplength=400, justify="center")
-        lbl.pack(pady=(4, 2))
-        tk.Label(win, text="يتطلب إعادة تشغيل بعد التثبيت.\n"
-                           "التحديث لا يلمس بياناتك والتقارير نهائياً.",
+                       wraplength=430, justify="center")
+        lbl.pack(pady=(4, 2), fill="x")
+        # ★ إضافة (الإصدار 15 — الجزء الثاني): سطر الإصدارين — الحالي ← الجديد
+        lbl_vers = tk.Label(win, text="", bg=CARD, fg=DARK,
+                            font=("Segoe UI", 11, "bold"),
+                            wraplength=430, justify="center")
+        lbl_vers.pack(pady=(0, 4), fill="x")
+        # ★ إضافة (الإصدار 15 — الجزء الثاني): زر «📄 ما الجديد؟» — ملاحظات
+        # الإصدار من ملف الملاحظات إن وُجد (جلب نص فقط بلا أي تنزيل للبرنامج)
+        b_news = self.mk_btn(win, "📄 ما الجديد؟",
+                             lambda: self.update_show_changelog(win, b_news), "#0369a1")
+        b_news.pack(ipadx=8)
+        add_tip(b_news, "عرض ملاحظات الإصدار الجديدة إن نُشرت — بلا أي تنزيل للبرنامج")
+        # ★ إضافة (الإصدار 15 — الجزء الثاني): سطر الطمأنة — لا مساس بالبيانات
+        # وسيلزم تسجيل دخول من جديد بعد إعادة التشغيل التلقائية
+        tk.Label(win, text="التحديث لا يلمس بياناتك والتقارير — وسيلزم تسجيل "
+                           "دخول من جديد بعد إعادة التشغيل",
                  bg=CARD, fg=GRAY, font=("Segoe UI", 10),
-                 justify="center").pack(pady=(0, 8))
-        fr_btns = tk.Frame(win, bg=CARD)
-        fr_btns.pack(pady=2)
-        b_install = self.mk_btn(fr_btns, "تثبيت الآن",
-                                lambda: self.update_install(win, b_install, lbl), GREEN)
-        b_install.pack(side="right", padx=6)
-        add_tip(b_install, "تنزيل الإصدار الجديد وتثبيته — لا يلمس البيانات والتقارير نهائياً")
-        b_close = self.mk_btn(fr_btns, "إغلاق", win.destroy, "#475569")
-        b_close.pack(side="right", padx=6)
+                 wraplength=430, justify="center").pack(pady=(6, 2), fill="x")
         b_recheck = self.mk_btn(win, "🔄 فحص التحديثات الآن",
-                                lambda: self.update_check_now(win, lbl, b_install, b_close), "#0369a1")
-        b_recheck.pack(pady=(10, 12))
+                                lambda: self.update_check_now(win, lbl, b_install, b_close, lbl_vers), "#0369a1")
+        b_recheck.pack(pady=(8, 0))
         add_tip(b_recheck, "إعادة فحص التحديثات الآن بغض النظر عن الفحص التلقائي الصامت")
         # ★ إضافة (نافذة «عن البرنامج»): زر داخل نافذة التحديث بجانب زر الفحص —
         # يفتح نبذة مختصرة عن البرنامج (قراءة فقط من المتغيرات والجداول
         # القائمة بلا أي فحص شبكي عند الفتح)
         b_about = self.mk_btn(win, "ℹ️ عن البرنامج", self.about_dialog, "#475569")
-        b_about.pack(pady=(0, 12))
+        b_about.pack(pady=(4, 0))
         add_tip(b_about, "نبذة عن البرنامج: الإصدار وآخر تحديث ومجلد البيانات — بلا أي اتصال")
+
+        # ---------- أزرار الموافقة الصريحة (الشريط السفلي المحزوم أولاً) ----------
+        def _install():
+            """بوابة الموافقة الصريحة — لا تنزيل ولا تثبيت إلا من هنا"""
+            v = getattr(self, "update_available_version", None)
+            if not v:
+                return          # لا تثبيت بلا إصدار مؤكد فعلياً
+            cart = getattr(self, "cart", None) or []
+            extra = (f" — مع فقدان سلة فيها {len(cart)} أصناف" if cart else "")
+            audit("موافقة على التحديث",
+                  f"من {VERSION} إلى {v} — بواسطة {self.user_name}{extra}")
+            self.update_install(win, b_install, lbl)
+
+        def _later():
+            """«❌ لا، لاحقاً» — لا يحدث شيء: الشريط يبقى للموافقة لاحقاً"""
+            audit("رفض التحديث",
+                  f"الإصدار {getattr(self, 'update_available_version', None) or '—'}"
+                  f" — بواسطة {self.user_name}: طلب التأجيل، الشريط يبقى للموافقة لاحقاً")
+            win.destroy()
+
+        b_install = self.mk_btn(fr_btns, "✅ نعم، ثبّت التحديث الآن", _install, GREEN)
+        b_install.pack(side="right", padx=6)
+        add_tip(b_install, "الموافقة الصريحة: تنزيل الإصدار الجديد وتثبيته ثم إعادة تشغيل "
+                           "تلقائية — لا يلمس البيانات والتقارير نهائياً")
+        b_close = self.mk_btn(fr_btns, "❌ لا، لاحقاً", _later, "#475569")
+        b_close.pack(side="right", padx=6)
+        add_tip(b_close, "لا يحدث شيء الآن — يبقى شريط الإشعار للموافقة لاحقاً")
+
+        # ★ إضافة (الإصدار 15 — الجزء الثاني): السلة فيها أصناف غير محفوظة —
+        # زر التثبيت معطل حتى تأكيد التحذير بنفس منطق تبديل المستخدم
+        if cart_n:
+            b_install.config(state="disabled",
+                             text=f"⛔ أكّد المتابعة أولاً (السلة فيها {cart_n} أصناف)")
+
+            def _confirm_cart():
+                if messagebox.askyesno("تحديث وسلة غير محفوظة",
+                        f"السلة فيها {cart_n} أصناف — ستُفقد. متابعة؟", parent=win):
+                    b_install.config(state="normal", text="✅ نعم، ثبّت التحديث الآن")
+                    lbl_cart.config(text="تم تأكيد فقدان السلة — يمكن التثبيت الآن",
+                                    fg="#a16207")
+                # «لا» = لا شيء يحدث — يبقى زر التثبيت معطلاً
+
+            b_cart = self.mk_btn(win, "⚠️ متابعة رغم فقدان السلة؟", _confirm_cart, ORANGE)
+            b_cart.pack(ipadx=8, pady=(4, 2))
+            add_tip(b_cart, "تأكيد صريح بفقدان أصناف السلة غير المحفوظة قبل تمكين زر "
+                           "التثبيت — نفس منطق تبديل المستخدم")
+
         # الحالة الابتدائية: إصدار معروف من الفحص الصامت، أو فحص فوري عند الفتح
         ver = getattr(self, "update_available_version", None)
         if ver:
             lbl.config(text=f"يتوفر تحديث جديد (الإصدار {ver})", fg=ORANGE)
+            lbl_vers.config(text=f"الإصدار الحالي {VERSION} ← الجديد {ver}")
         else:
             # ★ إصلاح (11 — البند د): بلا إصدار مؤكد يبدأ الفحص فوراً وزر
-            # «تثبيت الآن» مخفي حتى تثبت نتيجة المقارنة وجود إصدار أحدث فعلياً
-            self.update_check_now(win, lbl, b_install, b_close)
+            # التثبيت مخفي حتى تثبت نتيجة المقارنة وجود إصدار أحدث فعلياً
+            self.update_check_now(win, lbl, b_install, b_close, lbl_vers)
+        # ★ إضافة (الإصدار 15 — الجزء الأول): الحجم + الفحص الذاتي + التمركز
+        place_window(win, 520, 560)
 
-    def update_check_now(self, win, lbl, install_btn=None, anchor_btn=None):
+    def update_check_now(self, win, lbl, install_btn=None, anchor_btn=None, vers_lbl=None):
         """(4) زر «🔄 فحص التحديثات الآن»: فحص فوري بنفس مهلة الفحص الصامت —
         يحدّث حالة نافذة التحديث وشريط الإشعار الأصفر معاً وبهدوء عند الفشل
+        ★ تعديل مصرح به (الإصدار 15 — الجزء الثاني): معامل اختياري vers_lbl
+        وحده — سطر «الإصدار الحالي ← الجديد» في نافذة الموافقة يُحدَّث مع كل
+        نتيجة (الافتراضي None = كما كان حرفياً لأي نداء آخر)
         ★ إصلاح (11 — البند د): عند عدم وجود إصدار أحدث فعلياً تظهر رسالة
         «✅ أنت على أحدث إصدار — الإصدار الحالي [VERSION]» ولا يظهر أي زر
         تثبيت في هذه الحالة — فزر «تثبيت الآن» يُخفى فور بدء الفحص ولا
@@ -6360,16 +6569,22 @@ class App(tk.Tk):
             try:
                 if remote is None:
                     lbl.config(text="تعذر فحص التحديثات الآن", fg=RED)
+                    if vers_lbl is not None:
+                        vers_lbl.config(text="")
                     return
                 if not update_is_newer(remote, VERSION):
                     self.update_available_version = None  # لا تحديث مؤكد الآن
                     self.refresh_update_bar()             # إخفاء الشريط والزر إن بقيا من تأكيد سابق
                     lbl.config(text=f"✅ أنت على أحدث إصدار — الإصدار الحالي {VERSION}",
                                fg=GREEN)
+                    if vers_lbl is not None:
+                        vers_lbl.config(text="")
                     return
                 self.update_available_version = remote
                 audit("فحص تحديث يدوي", f"يتوفر إصدار جديد: {remote}")
                 lbl.config(text=f"يتوفر تحديث جديد (الإصدار {remote})", fg=ORANGE)
+                if vers_lbl is not None:
+                    vers_lbl.config(text=f"الإصدار الحالي {VERSION} ← الجديد {remote}")
                 _show_install()
                 self.refresh_update_bar()
             except Exception:
@@ -6378,6 +6593,74 @@ class App(tk.Tk):
             win.after(250, _poll)
         except Exception:
             pass
+
+    def update_show_changelog(self, parent, btn=None):
+        """★ إضافة (الإصدار 15 — الجزء الثاني): زر «📄 ما الجديد؟» — يجلب
+        ملاحظات الإصدار الجديد من ملف الملاحظات (جلب نص فقط بلا أي تنزيل
+        لملف البرنامج أبداً) ويعرض قسم هذا الإصدار في نافذة قراءة أنيقة
+        بأسلوب البرنامج؛ وعند غياب الملف أو غياب القسم رسالة لطيفة، وأي فشل
+        صمت مهذب — زر الطلب يعرض «جارٍ الجلب...» معطلاً ثم يعود"""
+        ver = getattr(self, "update_available_version", None) or VERSION
+        old_text = None
+        if btn is not None:
+            try:
+                old_text = btn.cget("text")
+                btn.config(text="⏳ جارٍ جلب الملاحظات...", state="disabled",
+                           cursor="watch")
+            except Exception:
+                btn = None
+        box = update_fetch_async(UPDATE_CHANGELOG_URL, UPDATE_CHECK_TIMEOUT)
+
+        def _restore():
+            """إعادة زر الطلب لنصه وحالته (بأقصى جهد)"""
+            if btn is not None and old_text:
+                try:
+                    btn.config(text=old_text, state="normal", cursor="hand2")
+                except Exception:
+                    pass
+
+        def _poll():
+            if box["state"] != "done":
+                try:
+                    self.after(250, _poll)
+                except Exception:
+                    _restore()
+                return
+            _restore()
+            try:
+                text = update_changelog_section(box["data"], ver)
+                if not text:
+                    messagebox.showinfo("ما الجديد؟",
+                        "لا توجد ملاحظات منشورة لهذا الإصدار بعد.\n"
+                        "يمكنك سؤال المالك عن تفاصيل التحديث.", parent=parent)
+                    return
+                win = self.register_window(tk.Toplevel(self))
+                win.title(f"📄 ما الجديد؟ — الإصدار {ver}")
+                win.configure(bg=CARD)
+                # القاعدة الذهبية: زر الإغلاق أسفل أولاً ثم المحتوى يتمدد
+                fr_btns = tk.Frame(win, bg=CARD)
+                fr_btns.pack(side="bottom", fill="x", pady=(6, 12))
+                b_close = self.mk_btn(fr_btns, "إغلاق", win.destroy, "#475569")
+                b_close.pack()
+                add_tip(b_close, "إغلاق نافذة ملاحظات التحديث")
+                txt = tk.Text(win, font=("Segoe UI", 11), bg="white", fg=DARK,
+                              wrap="word", relief="flat", padx=14, pady=12,
+                              height=14, width=52)
+                vsb = ttk.Scrollbar(win, orient="vertical", command=txt.yview)
+                txt.configure(yscrollcommand=vsb.set)
+                vsb.pack(side="left", fill="y")
+                txt.pack(fill="both", expand=True, padx=(10, 16), pady=(12, 0))
+                txt.insert("1.0", text)
+                txt.tag_add("all", "1.0", "end")
+                txt.tag_configure("all", justify="right")   # نص عربي من اليمين
+                txt.configure(state="disabled")             # قراءة فقط
+                place_window(win, 560, 460)
+            except Exception:
+                pass
+        try:
+            self.after(250, _poll)
+        except Exception:
+            _restore()
 
     def update_check_manual(self, btn=None):
         """★ إضافة (إصلاح 3 — البندان أ+ب): «🔄 فحص التحديثات الآن» من
@@ -6467,9 +6750,10 @@ class App(tk.Tk):
         main_v[الإصدار]_[التاريخ].py — سجل تاريخي كامل لا يُحذف منه شيء
         (★ التعديل المصرح به الوحيد في خطوات التثبيت) ← (د)
         الاستبدال باسم مكتشف ديناميكياً من __file__ ← (هـ) حفظ
-        last_update_date + سجل التدقيق ← (و) رسالة إعادة التشغيل وزر
-        «إغلاق الآن» — ولو البرنامج EXE فالتحديث يدوي — وأي فشل في أي
-        خطوة = إلغاء آمن برسالة «لم يتغير شيء»"""
+        last_update_date + سجل التدقيق ← (و) ★ تعديل مصرح به (الإصدار 15 —
+        الجزء الثاني): رسالة النجاح بإعادة التشغيل التلقائية الآمنة بدل زر
+        «إغلاق الآن» اليدوي القديم — ولو البرنامج EXE فالتحديث يدوي — وأي
+        فشل في أي خطوة = إلغاء آمن برسالة «لم يتغير شيء»"""
         # نسخة EXE لا تُحدَّث تلقائياً: تنبيه صريح دون أي تنزيل
         if getattr(sys, "frozen", False):
             messagebox.showinfo("تحديث EXE",
@@ -6500,7 +6784,7 @@ class App(tk.Tk):
             except Exception:
                 pass
             try:
-                btn.config(text="تثبيت الآن", state="normal", cursor="hand2")
+                btn.config(text="✅ نعم، ثبّت التحديث الآن", state="normal", cursor="hand2")
                 lbl.config(text="يتوفر تحديث جديد (الإصدار "
                           + str(getattr(self, "update_available_version", "")) + ")",
                           fg=ORANGE)
@@ -6566,21 +6850,65 @@ class App(tk.Tk):
                       f"من {VERSION} إلى {getattr(self, 'update_available_version', 'إصدار جديد')}")
             except Exception:
                 pass
-            # (و) رسالة النجاح + زر «إغلاق الآن» — يكتمل التحديث بإعادة التشغيل
+            # (و) ★ تعديل مصرح به (الإصدار 15 — الجزء الثاني): رسالة النجاح
+            # بإعادة التشغيل التلقائية الآمنة بدل زر «إغلاق الآن» اليدوي —
+            # يُفقد تسجيل الدخول فقط، ولا تُمس البيانات والتقارير إطلاقاً
+            new_ver = str(getattr(self, "update_available_version", "إصدار جديد"))
             try:
                 for w in win.winfo_children():
                     w.destroy()
-                tk.Label(win, text="تم التحديث ✅", bg=CARD, fg=GREEN,
-                         font=FT).pack(pady=(36, 6))
-                tk.Label(win, text="أغلق البرنامج وافتحه من جديد.", bg=CARD, fg=DARK,
-                         font=F).pack(pady=(0, 14))
-                self.mk_btn(win, "إغلاق الآن", self.exit_app, RED).pack(ipadx=10)
+                tk.Label(win, text=f"تم التحديث إلى {new_ver} بنجاح ✅", bg=CARD,
+                         fg=GREEN, font=FT, wraplength=420,
+                         justify="center").pack(pady=(36, 6))
+                tk.Label(win, text="جارٍ إعادة تشغيل البرنامج تلقائياً...\n"
+                                  "(سيُطلب تسجيل الدخول من جديد)",
+                         bg=CARD, fg=DARK, font=F,
+                         justify="center").pack(pady=(0, 14))
             except Exception:
                 pass
+            try:
+                messagebox.showinfo("تم التحديث",
+                    f"✅ تم التحديث إلى {new_ver} بنجاح!\n"
+                    "جارٍ إعادة تشغيل البرنامج تلقائياً...\n"
+                    "(سيُطلب تسجيل الدخول من جديد)", parent=win)
+            except Exception:
+                pass
+            # إعادة التشغيل التلقائية الآمنة — إطلاق الجديدة ثم خروج نظيف
+            self._restart_after_update(new_ver)
         try:
             win.after(250, _poll)
         except Exception:
             pass
+
+    def _restart_after_update(self, new_ver):
+        """★ إضافة (الإصدار 15 — الجزء الثاني): إعادة التشغيل التلقائية
+        الآمنة بعد نجاح التثبيت — الترتيب الصارم: (أ) اتصالات القاعدة قصيرة
+        أصلاً فلا يوجد اتصال مفتوح يعلّق الخروج (ب) إطلاق العملية الجديدة
+        أولاً كي لا تظهر لحظة «لا برنامج مفتوح» ولا تتضارب النسخ (ج) الخروج
+        النظيف من القديمة بنفس مسار exit_app القائم حرفياً — النسخة
+        الاحتياطية والتدقيق يأخذان حقهما ولا نتجاوزهما أبداً. لا تُمس القاعدة
+        ولا النسخ الاحتياطية ولا الإعدادات ولا سجل التدقيق ولا الأرشيف
+        إطلاقاً — يُفقد تسجيل الدخول فقط (عودة لشاشة الدخول). الحمايات:
+        فشل إطلاق العملية الجديدة = رسالة «أعد فتح البرنامج يدوياً هذه المرة
+        فقط» وخروج عادي بلا انهيار، ونسخة EXE تبقى على الرسالة اليدوية"""
+        audit("إعادة تشغيل تلقائية بعد التحديث", f"إلى {new_ver}")
+        # نسخة EXE لا تُعاد تشغيلها تلقائياً — رسالة يدوية وخروج عادي
+        if getattr(sys, "frozen", False):
+            messagebox.showinfo("أعد التشغيل يدوياً",
+                "تم التحديث بنجاح — أغلق البرنامج وافتحه من جديد لتفعيل "
+                "الإصدار الجديد.")
+            self.exit_app()
+            return
+        try:
+            # إطلاق العملية الجديدة أولاً — قبل الخروج النظيف من القديمة
+            subprocess.Popen([sys.executable, os.path.abspath(__file__)])
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+            messagebox.showwarning("تعذر التشغيل التلقائي",
+                "أعد فتح البرنامج يدوياً هذه المرة فقط.")
+            self.exit_app()      # خروج عادي نظيف — لا انهيار أبداً
+            return
+        self.exit_app()          # الخروج النظيف — النسخة الاحتياطية كاملة كما هي
 
     def about_dialog(self):
         """★ إضافة (نافذة «عن البرنامج»): نبذة مختصرة أنيقة عن البرنامج بأسلوب
@@ -6591,11 +6919,10 @@ class App(tk.Tk):
         الجلسة، ومجلد البيانات بخط صغير قابل للتحديد مع زر نسخ 📋 للمحفظة"""
         win = self.register_window(tk.Toplevel(self))
         win.title("عن البرنامج")
-        # ★ إصلاح (2): رفع الارتفاع 520 ← 560 فقط — صف «الإصدارات المحفوظة
-        # بالأرشيف» الجديد يحتاج مساحته دون قصّ أي عنصر قائم
-        W, H = 420, 560
-        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-        win.geometry(f"{W}x{H}+{(sw - W) // 2}+{max((sh - H) // 2 - 40, 0)}")
+        # ★ تعديل مصرح به (الإصدار 15 — الجزء الأول): التمركز والفحص الذاتي
+        # عبر place_window الموحدة (نفس الحجم القائم 420×560 — لا يرتفع إلا
+        # إن طلب المحتوى أكثر) — عناصر الأسفل محزومة أولاً هنا منذ إنشائها
+        # (القاعدة الذهبية كانت مطبقة في هذه النافذة أصلاً)
         win.resizable(False, False)
         win.configure(bg=SIDEBAR)
         win.transient(self)
@@ -6741,6 +7068,9 @@ class App(tk.Tk):
                            font=("Segoe UI", 10), bd=1, relief="solid",
                            cursor="hand2", padx=6, pady=2)
         b_copy.pack(side="left", padx=(0, 6))
+        # ★ إضافة (الإصدار 15 — الجزء الأول): 420×560 مع الفحص الذاتي
+        # والتمركز وسط الشاشة بدل الحساب اليدوي السابق
+        place_window(win, 420, 560)
 
     def archive_open_folder(self):
         """★ إضافة (أرشيف الإصدارات): زر «📂 فتح مجلد الأرشيف» — يفتح مجلد
@@ -6767,16 +7097,23 @@ class App(tk.Tk):
             return
         win = self.register_window(tk.Toplevel(self))
         win.title("أرشيف الإصدارات")
-        W, H = 780, 520
-        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-        win.geometry(f"{W}x{H}+{max((sw - W) // 2, 0)}+{max((sh - H) // 2 - 30, 0)}")
-        win.resizable(False, False)
+        # ★ تعديل مصرح به (الإصدار 15 — الجزء الأول — إصلاح خاص): الحجم
+        # 900×640 + minsize + تمدد كامل — كان 780×520 بلا تمدد فكانت الأزرار
+        # السفلية تُقص، والآن شريط الأزرار يُحزم أولاً side="bottom" كامل
+        # الظهور قبل أي شيء آخر (القاعدة الذهبية) فلا يُقص أبداً
         win.configure(bg=CARD)
         win.transient(self)
         try:
             win.grab_set()
         except Exception:
             pass
+        # ★ تعديل مصرح به (الإصدار 15 — الجزء الأول — القاعدة الذهبية): شريط
+        # الأزرار السفلي (استعادة/فتح المجلد/تحديث القائمة/إغلاق) يُحزم أولاً
+        # side="bottom" كامل الظهور، وعدّاد الإصدارات يُحزم side="bottom" فوقه
+        # مباشرة، ثم الرأس، والجدول يتمدد fill="both" expand=True في الباقي —
+        # والأزرار تُنشأ في الشريط لاحقاً بعد تعريف load_rows
+        fr_btns = tk.Frame(win, bg=CARD)
+        fr_btns.pack(side="bottom", fill="x", pady=(4, 12))
         # الرأس بنمط عناوين الشاشات القائم
         tk.Label(win, text="🗃️", bg=CARD, fg=DARK,
                  font=("Segoe UI", 24)).pack(pady=(12, 0))
@@ -6791,8 +7128,10 @@ class App(tk.Tk):
         enable_tree_sorting(tv)
         config_tree_stripes(tv)
         self._archive_rows = []          # مسارات ملفات الأرشيف بترتيب الصفوف
+        # ★ تعديل مصرح به (الإصدار 15 — الجزء الأول): العدّاد فوق شريط
+        # الأزرار مباشرة — ظاهر دائماً فوقه مهما تمدد الجدول
         lbl_count = tk.Label(win, text="", bg=CARD, fg=GRAY, font=("Segoe UI", 10))
-        lbl_count.pack(pady=(2, 0))
+        lbl_count.pack(side="bottom", pady=(2, 0))
 
         def load_rows():
             """قراءة ملفات الأرشيف من جديد وملء الجدول من الأحدث"""
@@ -6807,8 +7146,6 @@ class App(tk.Tk):
             lbl_count.config(text=f"عدد الإصدارات المحفوظة: {len(rows)}")
         load_rows()
         # الأزرار: الاستعادة (الأساسي) ثم فتح المجلد ثم التحديث ثم الإغلاق
-        fr_btns = tk.Frame(win, bg=CARD)
-        fr_btns.pack(pady=(4, 12))
         b_restore = self.mk_btn(fr_btns, "♻️ استعادة هذا الإصدار",
                                 lambda: self.archive_restore_selected(tv, win, load_rows), ORANGE)
         b_restore.pack(side="right", padx=6)
@@ -6824,6 +7161,9 @@ class App(tk.Tk):
         b_close = self.mk_btn(fr_btns, "إغلاق", win.destroy, "#475569")
         b_close.pack(side="right", padx=6)
         add_tip(b_close, "إغلاق نافذة أرشيف الإصدارات")
+        # ★ إضافة (الإصدار 15 — الجزء الأول): 900×640 + minsize لا يُصغَّر
+        # تحته إلى إخفاء الأزرار + تمدد كامل + تمركز وسط الشاشة
+        place_window(win, 900, 640, 820, 560, can_resize=True)
 
     def archive_restore_selected(self, tv, win, reload_rows):
         """★ إضافة (أرشيف الإصدارات): زر «♻️ استعادة هذا الإصدار» — تحذير
