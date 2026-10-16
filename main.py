@@ -310,7 +310,7 @@ except Exception:
 import urllib.request   # ★ إضافة (إصدار 10): جلب التحديث — المكتبة القياسية وحدها
 import threading        # ★ إضافة (إصدار 10): فحص خلفي لا يجمّد الواجهة أبداً
 
-VERSION = "2.9"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
+VERSION = "2.10"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
 UPDATE_VERSION_URL = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/version.txt"
 UPDATE_FILE_URL    = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/main.py"
 # ★ إضافة (الإصدار 15 — الجزء الثاني): ملاحظات الإصدارات (changelog) —
@@ -1726,14 +1726,19 @@ def print_report_lines(printer_name, lines, job_title="تقرير"):
             open_print_libs_install_dialog()
             return False
         name = (printer_name or "").strip()
-        # ★ إضافة (الإصدار 19 — القسم 2 — البند 4): كشف تلقائي للطابعة عند
-        # محاولة الطباعة — المحفوظ الصالح لا يُمس أبداً، والفراغ أو المفقود
-        # من قائمة ويندوز (فُكّت أو تغيّر اسمها) يُكتشف بديل ويُحفظ تلقائياً
-        name = auto_detect_printer(name) or name
+        # ★ تعديل مصرح به (الإصدار 20 — الاستثناء أ): مصدر اسم الطابعة صار
+        # مفتاح الجهاز printer_device_<اسم الجهاز> (ثم المفاتيح العامة
+        # القديمة للتوافق) — وكشف الطابعة التلقائي القديم (الإصدار 19) الذي
+        # كان يملأ الفراغ ويستبدل المفقود بالطابعة الافتراضية أُلغي هنا:
+        # ممنوع الافتراضية كبديل تلقائي، وبدون اختيار صريح لا تحدث طباعة
+        # صامتة خاطئة أبداً — بل رسالة عربية واضحة يُرشد فيها البائع
+        # لمديره (لا تُفتح نافذة الاختيار للبائع)
         if not name:
-            messagebox.showerror("لا توجد طابعة مختارة",
-                "لم يتم اختيار طابعة بعد.\n\n"
-                "اختر الطابعة الحرارية من شاشة «⚙️ إعدادات الطباعة» أولاً.")
+            name = get_device_printer()
+        if not name:
+            messagebox.showerror("لا توجد طابعة مختارة لهذا الجهاز",
+                "لم يتم اختيار طابعة لهذا الجهاز بعد.\n\n"
+                "الرجاء التواصل مع المدير لاختيار الطابعة.")
             return False
         img = render_report_image(lines)
         # ESC @ تهيئة الطابعة ثم الصورة النقطية ثم أمر قص الورق GS V
@@ -1862,6 +1867,58 @@ def auto_detect_printer(current=None):
         PRINT_DETECT_STATE["last_notified"] = detected
         _print_notify(f"✅ تم اختيار الطابعة تلقائياً: {detected}", "ok")
     return detected
+
+# ═════════════════════════════════════════════════════
+# ★★★ إضافة (الإصدار 20): طابعة مستقلة لكل جهاز 🖥️🖨 ★★★
+# فصل صلاحية «اختيار الطابعة» عن «استخدام الطباعة»: كل جهاز من أجهزة
+# المحل له طابعته الخاصة — الاختيار يُحفظ في جدول settings بمفتاح فريد
+# لكل جهاز (printer_device_ + اسم الجهاز من socket.gethostname) فتغيير
+# طابعة جهاز لا يؤثر على باقي الأجهزة مطلقاً. والقراءة قبل أي طباعة:
+# مفتاح هذا الجهاز أولاً ← فإن لم يوجد فالمفتاحان العامان القديمان
+# (printer_default ثم printer_name الذي كانت الإصدارات السابقة تحفظ عليه
+# فعلاً) للتوافق مع الإعدادات المحفوظة سابقاً ← فإن لم يوجد أي منهما
+# فهذه «لا طابعة مختارة لهذا الجهاز» — بلا أي بديل تلقائي من ويندوز:
+# بدون اختيار صريح لا تحدث طباعة صامتة خاطئة أبداً
+# ═════════════════════════════════════════════════════
+def device_printer_key():
+    """★ إضافة (الإصدار 20 — القسم 1): مفتاح طابعة هذا الجهاز في جدول
+    settings — الشكل: printer_device_ + اسم الجهاز (socket.gethostname)،
+    وأي فشل في قراءة الاسم يرجع مفتاحاً آمناً ثابتاً كي لا ينكسر شيء أبداً"""
+    try:
+        import socket
+        host = (socket.gethostname() or "").strip()
+    except Exception:
+        host = ""
+    return "printer_device_" + (host or "THIS-PC")
+
+def get_device_printer():
+    """★ إضافة (الإصدار 20 — القسم 1): قراءة طابعة هذا الجهاز قبل أي طباعة —
+    (1) مفتاح هذا الجهاز printer_device_<اسم الجهاز> (2) فإن لم يوجد فالمفتاح
+    العام printer_default للتوافق مع الإعدادات القديمة (3) فإن لم يوجد
+    فالمفتاح العام printer_name الذي كانت الإصدارات السابقة تحفظ عليه فعلاً
+    (4) لا شيء = نص فارغ أي «لا طابعة مختارة لهذا الجهاز» — ولا أي بديل
+    تلقائي: ممنوع استخدام الطابعة الافتراضية من ويندوز بدون اختيار صريح"""
+    try:
+        v = (get_setting(device_printer_key()) or "").strip()
+        if v:
+            return v
+    except Exception:
+        pass
+    for legacy in ("printer_default", "printer_name"):
+        try:
+            v = (get_setting(legacy) or "").strip()
+            if v:
+                return v
+        except Exception:
+            pass
+    return ""
+
+def set_device_printer(name):
+    """★ إضافة (الإصدار 20 — القسم 1): حفظ اختيار الطابعة على مستوى الجهاز —
+    يُكتب على مفتاح هذا الجهاز printer_device_<اسم الجهاز> وحده، فلا يمس
+    المفاتيح العامة القديمة ولا طابعات بقية الأجهزة إطلاقاً (لكل جهاز
+    طابعته الخاصة وتغييرها لا يؤثر على غيره)"""
+    set_setting(device_printer_key(), (name or "").strip())
 
 def _print_install_packages(user_flag=False):
     """★ إضافة (الإصدار 19 — القسم 1 — البند ٢ب): تنفيذ أمر التثبيت من نفس
@@ -3375,6 +3432,25 @@ class App(tk.Tk):
         self.container = tk.Frame(self, bg=BG)
         self.container.pack(side="left", fill="both", expand=True)
 
+        # ★★★ إضافة (الإصدار 20 — البند 4): شريط الحالة السفلي ★★★
+        # عرض قراءة فقط للجميع (أدمن ومدير وبائع): «🖨 الطابعة: [اسم طابعة
+        # هذا الجهاز]» أو «🖨 الطابعة: غير محددة» — المصدر مفتاح الجهاز
+        # printer_device_<اسم الجهاز>، ويُحدَّث النص فوراً بعد تغيير المدير
+        # للطابعة (refresh_printer_status_bar). يُحزم أسفل الحاوية أولاً قبل
+        # الشريط العلوي والصفحات فلا يزاحمه أي محتوى أبداً ويبقى ثابتاً
+        # أسفل الشاشة في كل الصفحات
+        self.bottom_status_bar = tk.Frame(self.container, bg=CARD,
+                                          highlightbackground=BORDER, highlightthickness=1)
+        self.bottom_status_bar.pack(side="bottom", fill="x")
+        self.lbl_printer_status = tk.Label(self.bottom_status_bar, text="🖨 الطابعة: …",
+                                           bg=CARD, fg=GRAY,
+                                           font=("Segoe UI", 9, "bold"), anchor="e")
+        self.lbl_printer_status.pack(side="right", padx=14, pady=3)
+        add_tip(self.lbl_printer_status,
+                "الطابعة المختارة لهذا الجهاز — يختارها الأدمن أو المدير من "
+                "«⚙️ إعدادات الطباعة» وتخص هذا الجهاز وحده (لكل جهاز طابعته الخاصة)")
+        self.refresh_printer_status_bar()   # النص الأولي من مفتاح هذا الجهاز
+
         # ★ الشريط العلوي للإحصائيات — يظهر في كل الشاشات
         self.build_stats_bar()
 
@@ -3445,6 +3521,10 @@ class App(tk.Tk):
         # تلقائياً — وإن كانت المكتبات ناقصة يظهر للمدير فقط شريط أصفر رفيع
         # «انقر للتثبيت التلقائي» (يُستدعى هنا بعد اكتمال بناء الواجهة كي يجد
         # الحاوية والشريط الإحصائي جاهزين) فيُثبَّت من البداية دون انتظار أول طباعة
+        # ★ تعديل مصرح به (الإصدار 20 — الاستثناء أ): كشف الطابعة التلقائي عند
+        # بدء التشغيل أُلغي — اختيار الطابعة صار صريحاً لكل جهاز (مفتاح
+        # printer_device_<اسم الجهاز>) ولا يُملأ أي إعداد تلقائياً ولا بديل
+        # من الطابعة الافتراضية (انظر داخل الدالة نفسها)
         try:
             self._print_setup_startup()
         except Exception as e:
@@ -3521,7 +3601,13 @@ class App(tk.Tk):
         "today": None, "archive": None, "search": None,
         "dash": "dashboard", "sellers": "perf_report",
         "users": "manager", "audit": "view_audit",
-        "backups": "backup", "print": "print_settings",
+        "backups": "backup",
+        # ★ تعديل مصرح به (الإصدار 20 — الاستثناء ب): زر «إعدادات الطباعة»
+        # (اختيار الطابعة) صار «manager» = أدمن/مدير فقط — لا يظهر للبائع
+        # نهائياً حتى لو مُنحت له صلاحية print_settings من شاشة الصلاحيات،
+        # والسبب: اختيار الطابعة إعداد للجهاز يقتصر على الإدارة، بينما
+        # الطباعة نفسها متاحة لكل الأدوار (الاستثناء أ)
+        "print": "manager",
         "update": "manager",   # ★ إضافة (إصدار 10): زر «التحديث» — للمدير فقط
     }
     # ★ إضافة (إصدار 8 — الميزة 6): مجموعات الشريط الجانبي بترتيبها الجديد —
@@ -7742,12 +7828,35 @@ class App(tk.Tk):
 
     # ---------- (3) شاشة إعدادات الطباعة — للمدير فقط ----------
     def show_print_settings(self):
-        """★ إضافة (إصدار 6): فتح شاشة إعدادات الطباعة — للمدير فقط"""
-        # ★ تعديل مصرح به (إصدار 8 — الميزة 5): صلاحية «إعدادات الطباعة» بدل «المدير فقط»
-        if not self.require_admin("print_settings"):
+        """★ إضافة (إصدار 6): فتح شاشة إعدادات الطباعة — للمدير فقط
+        ★ تعديل مصرح به (الإصدار 20 — الاستثناء ب): اختيار الطابعة إعداد
+        للجهاز يقتصر على الإدارة — الفحص صار دور المستخدم نفسه (أدمن/مدير
+        فقط عبر manager_level) بدل صلاحية print_settings الدقيقة، فالبائع
+        لا يرى نافذة اختيار الطابعة نهائياً حتى لو مُنحت له الصلاحية من
+        شاشة «✏️ تعديل الصلاحيات» — بينما الطباعة نفسها متاحة له كما هي"""
+        # ★ تعديل مصرح به (الإصدار 20 — الاستثناء ب): البوابة القديمة
+        # require_admin("print_settings") (تعديل إصدار 8) استُبدلت بفحص
+        # الدور نفسه — اختيار الطابعة إعداد جهاز للإدارة فقط (أدمن/مدير)
+        if not manager_level(self.role):
+            messagebox.showwarning("صلاحية",
+                "اختيار الطابعة وإعدادات الطباعة خاصة بالإدارة فقط (أدمن/مدير)")
             return
         self.show_page("print")
         self.refresh_printer_list()
+
+    def refresh_printer_status_bar(self):
+        """★ إضافة (الإصدار 20 — البند 4): تحديث نص الطابعة في شريط الحالة
+        السفلي — قراءة من مفتاح الجهاز printer_device_<اسم الجهاز> (ثم
+        المفاتيح العامة القديمة للتوافق): «🖨 الطابعة: [الاسم]» أو
+        «🖨 الطابعة: غير محددة» — يُستدعى عند بدء التشغيل (بناء الشريط) وبعد
+        كل تغيير للطابعة من شاشة الإعدادات فيتحدث النص فوراً للجميع"""
+        try:
+            name = get_device_printer()
+            self.lbl_printer_status.config(
+                text=("🖨 الطابعة: " + name) if name else "🖨 الطابعة: غير محددة",
+                fg=(DARK if name else GRAY))
+        except Exception as e:
+            log_error(e)
 
     def build_print_settings_page(self, p):
         """★ إضافة (إصدار 6): شاشة إعدادات الطباعة — قائمة طابعات ويندوز
@@ -7846,12 +7955,16 @@ class App(tk.Tk):
 
     def refresh_printer_list(self):
         """★ إضافة (إصدار 6): جلب قائمة الطابعات من ويندوز وعرضها في القائمة
-        المنسدلة — والطابعة المحفوظة في الإعدادات تُحدد تلقائياً إن وُجدت"""
+        المنسدلة — والطابعة المحفوظة في الإعدادات تُحدد تلقائياً إن وُجدت
+        ★ تعديل مصرح به (الإصدار 20 — القسم 1): منطق اكتشاف الطابعات المثبتة
+        في النظام كما هو حرفياً بلا أي تغيير — المصدر الوحيد المتغير هو
+        الطابعة المحفوظة: صارت من مفتاح هذا الجهاز printer_device_<اسم
+        الجهاز> (مع توافق المفاتيح العامة القديمة) بدل المفتاح العام"""
         try:
             printers = get_windows_printers()
             self.cb_printer["values"] = printers
             cur = self.cb_printer.get().strip()
-            saved = get_setting("printer_name") or ""
+            saved = get_device_printer()
             pick = cur if cur in printers else (saved if saved in printers else "")
             self.cb_printer.set(pick)
             if printers:
@@ -7866,12 +7979,17 @@ class App(tk.Tk):
 
     def on_printer_selected(self):
         """★ إضافة (إصدار 6): اختيار الطابعة يُحفظ فوراً في جدول settings
-        الموجود (المفتاح printer_name) — كما تنص المواصفة تماماً"""
+        الموجود — كما تنص المواصفة تماماً
+        ★ تعديل مصرح به (الإصدار 20 — القسم 1): الحفظ صار على مفتاح هذا
+        الجهاز printer_device_<اسم الجهاز> بدل المفتاح العام printer_name —
+        فكل جهاز طابعته الخاصة وتغيير طابعة جهاز لا يؤثر على باقي الأجهزة،
+        ويُحدَّث شريط الحالة السفلي فوراً بعد الحفظ (البند 4)"""
         try:
             name = self.cb_printer.get().strip()
             if name:
-                set_setting("printer_name", name)
+                set_device_printer(name)
                 self.lbl_print_status.config(text=f"✔ تم اختيار الطابعة: {name}", fg=GREEN)
+                self.refresh_printer_status_bar()
         except Exception as e:
             log_error(e)
 
@@ -7879,11 +7997,14 @@ class App(tk.Tk):
         """★ إضافة (إصدار 6): طباعة صفحة اختبار قصيرة (اسم النظام + سطر تجريبي
         عربي + التاريخ + الوقت) للتأكد أن كل شيء يعمل قبل الاعتماد على الطباعة"""
         try:
-            name = self.cb_printer.get().strip() or (get_setting("printer_name") or "")
+            # ★ تعديل مصرح به (الإصدار 20 — القسم 1): المصدر مفتاح الجهاز
+            # (مع توافق المفاتيح العامة القديمة) والحفظ على مفتاح هذا الجهاز
+            name = self.cb_printer.get().strip() or get_device_printer()
             if not name:
                 messagebox.showwarning("تنبيه", "اختر الطابعة أولاً من القائمة")
                 return
-            set_setting("printer_name", name)   # حفظ المختار إن كان جديداً
+            set_device_printer(name)   # حفظ المختار إن كان جديداً — على مفتاح هذا الجهاز
+            self.refresh_printer_status_bar()   # ★ إضافة (الإصدار 20 — البند 4)
             if print_report_lines(name, build_test_page_lines(), job_title="طباعة تجريبية"):
                 audit("طباعة تجريبية", name)   # ★ تسجيل الطباعة التجريبية في سجل التدقيق
                 messagebox.showinfo("تم", "أُرسلت صفحة الاختبار إلى الطابعة ✅")
@@ -7896,13 +8017,18 @@ class App(tk.Tk):
         try:
             name = self.cb_printer.get().strip()
             if name:
-                set_setting("printer_name", name)
+                # ★ تعديل مصرح به (الإصدار 20 — القسم 1): الحفظ على مفتاح
+                # هذا الجهاز printer_device_<اسم الجهاز> — لا المفتاح العام
+                set_device_printer(name)
             set_setting("store_name", self.e_store.get().strip())
             set_setting("auto_print_daily", "1" if self.var_auto_print.get() else "0")
             audit("حفظ إعدادات الطباعة",
                   f"الطابعة: {name or 'غير محددة'} — الطباعة التلقائية: "
                   + ("مفعلة" if self.var_auto_print.get() else "معطلة"))
             self.lbl_print_status.config(text="✔ تم حفظ إعدادات الطباعة", fg=GREEN)
+            # ★ إضافة (الإصدار 20 — البند 4): تحديث فوري لشريط الحالة السفلي
+            # بعد تغيير المدير للطابعة (أو حفظ الإعدادات دون تغيير)
+            self.refresh_printer_status_bar()
         except Exception as e:
             log_error(e, sys.exc_info()[2])
             messagebox.showerror("خطأ", "تعذر حفظ إعدادات الطباعة")
@@ -8005,7 +8131,10 @@ class App(tk.Tk):
                 cash=rep["total_cash"] or 0, netw=rep["total_network"] or 0,
                 rets=rep["total_returns"] or 0, net=rep["net_total"] or 0,
                 closed_at=rep["closed_at"], closed_by=who, reprint=reprint)
-            if print_report_lines(get_setting("printer_name") or "", lines,
+            # ★ تعديل مصرح به (الإصدار 20 — القسم ٣): مصدر اسم الطابعة صار
+            # مفتاح هذا الجهاز printer_device_<اسم الجهاز> (مع توافق المفاتيح
+            # العامة القديمة) — المنطق والتنسيق كما هما تماماً
+            if print_report_lines(get_device_printer(), lines,
                                   job_title=f"تقرير يوم {d}"):
                 audit("طباعة تقرير يوم",
                       d + (" — إعادة طباعة" if reprint else (" — " + when if when else "")))
@@ -8468,7 +8597,8 @@ class App(tk.Tk):
                 self.print_day_report(data["d"], reprint=True)
             else:
                 f, t, rows = data["f"], data["t"], data["rows"]
-                if print_report_lines(get_setting("printer_name") or "",
+                # ★ تعديل مصرح به (الإصدار 20 — القسم ٣): مصدر اسم الطابعة مفتاح الجهاز
+                if print_report_lines(get_device_printer(),
                                       build_period_report_lines(get_setting("store_name") or "",
                                                                 f, t, rows),
                                       job_title=f"تقرير فترة {f} — {t}"):
@@ -8619,7 +8749,8 @@ class App(tk.Tk):
                 messagebox.showinfo("تنبيه", "لا توجد بيانات لطباعتها ضمن هذه الفترة",
                                     parent=win)
                 return
-            if print_report_lines(get_setting("printer_name") or "",
+            # ★ تعديل مصرح به (الإصدار 20 — القسم ٣): مصدر اسم الطابعة مفتاح الجهاز
+            if print_report_lines(get_device_printer(),
                                   build_sellers_report_lines(get_setting("store_name") or "",
                                                              state["f"], state["t"],
                                                              state["rows"], state["tot"],
@@ -9339,17 +9470,25 @@ class App(tk.Tk):
         تلقائياً + الشريط الأصفر الرفيع للمدير فقط إن كانت المكتبات ناقصة.
         السيناريو المستهدف (الربط بتوزيع التحديثات — البند 5): جهاز جديد →
         تحديث تلقائي → أول فتح → هذا الخطاف يجعل الطباعة جاهزة على ذلك
-        الجهاز بلا أي خطوة يدوية إطلاقاً"""
+        الجهاز بلا أي خطوة يدوية إطلاقاً
+        ★ تعديل مصرح به (الإصدار 20 — الاستثناء أ): كشف الطابعة التلقائي عند
+        بدء التشغيل أُلغي — اختيار الطابعة صار صريحاً لكل جهاز على مفتاح
+        printer_device_<اسم الجهاز> يختاره الأدمن/المدير من «⚙️ إعدادات
+        الطباعة»، ولا يُملأ أي إعداد تلقائياً ولا يُستبدل بالطابعة الافتراضية:
+        بدون اختيار صريح لا تحدث طباعة صامتة خاطئة أبداً، وعند أول محاولة
+        طباعة تظهر رسالة «لم يتم اختيار طابعة لهذا الجهاز بعد…» للمستخدم"""
         global PRINT_APP
         PRINT_APP = self            # مرجع الوحدة لواجهات الطباعة الجديدة
         try:
             check_print_libs()      # صامت — تخزين النتيجة بالذاكرة فقط
         except Exception:
             pass
-        try:
-            auto_detect_printer()   # يملأ الفراغ/يصلح المفقود + رسالة مرة واحدة
-        except Exception:
-            pass
+        # ★ تعديل مصرح به (الإصدار 20 — الاستثناء أ): استدعاء الكشف التلقائي
+        # auto_detect_printer() هنا أُلغي — كان يملأ الإعداد تلقائياً (حرارية
+        # مطابقة أو الطابعة الافتراضية في ويندوز) وهذا يخالف قاعدة الإصدار
+        # 20 الصريحة: ممنوع الطابعة الافتراضية كبديل تلقائي، وبدون اختيار
+        # صريح لا تحدث طباعة صامتة خاطئة (الدالة نفسها باقية بلا حذف بقسم
+        # الإصدار 19 — انظر get_device_printer للقراءة الجديدة لكل جهاز)
         if not PRINT_LIBS_OK and manager_level(self.role):
             self._show_print_libs_bar()
 
