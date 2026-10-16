@@ -227,6 +227,7 @@ import os, sys, traceback
 import time   # ★ إضافة (الإصدار 14 — البند 9): قفل الدخول المؤقت بعد 5 محاولات فاشلة (60 ثانية)
 import sqlite3, csv, shutil
 import subprocess   # ★ إضافة (الإصدار 15 — الجزء الثاني): إطلاق النسخة الجديدة من البرنامج بعد التحديث وقبل الخروج النظيف
+import importlib    # ★ إضافة (الإصدار 19 — القسم 1): تفريغ كاش الاستيراد قبل التحقق الفعلي بإعادة الاستيراد بعد التثبيت التلقائي
 from datetime import date, datetime
 
 # ★ إضافة (ميزات 1+3): مكتبات قياسية إضافية — التشفير وتصدير Excel وتهريب XML
@@ -258,6 +259,37 @@ PRINT_LIBS_MSG = (
     "pip install pillow arabic-reshaper python-bidi\n\n"
     "البرنامج يعمل بشكل كامل بدونها — الطباعة فقط هي المتوقفة.")
 
+def check_print_libs():
+    """★ إضافة (الإصدار 19 — القسم 1 — البند 1): فحص محمول لتوفر مكتبات
+    الطباعة الثلاث معاً (pillow + arabic-reshaper + python-bidi) — يُستدعى
+    عند بدء التشغيل مرة واحدة صمتاً (النتيجة تُخزَّن بالذاكرة في PRINT_LIBS_OK
+    والمتغيرات العامة) وعند كل محاولة طباعة، ويرجع True/False. وبعد نجاح
+    التثبيت التلقائي داخل نفس العملية يُفرَّغ كاش الاستيراد أولاً
+    (importlib.invalidate_caches) كي يرى المفسِّر الحزم المثبتة للتو قبل
+    التحقق الفعلي بإعادة الاستيراد"""
+    global PRINT_LIBS_OK, arabic_reshaper, get_display, Image, ImageDraw, ImageFont
+    try:
+        importlib.invalidate_caches()   # رؤية الحزم المثبتة للتو بعد pip
+    except Exception:
+        pass
+    ok = False
+    try:
+        if (arabic_reshaper is not None and get_display is not None
+                and Image is not None and ImageDraw is not None
+                and ImageFont is not None):
+            ok = True        # موجودة بالذاكرة أصلاً — فحص سريع بلا إعادة استيراد
+        else:
+            import arabic_reshaper as _ar19
+            from bidi.algorithm import get_display as _gd19
+            from PIL import Image as _im19, ImageDraw as _id19, ImageFont as _if19
+            arabic_reshaper, get_display = _ar19, _gd19
+            Image, ImageDraw, ImageFont = _im19, _id19, _if19
+            ok = True
+    except Exception:
+        ok = False
+    PRINT_LIBS_OK = ok     # النتيجة بالذاكرة — تقرأها بقية البرنامج كما كانت دائماً
+    return ok
+
 # ═══════════════════════════════════════════════════════════
 # ★ إضافة (إصدار 9 — الميزة 8): فحص مستقل لمكتبة pillow لصورة خلفية شاشة
 # الدخول — قد تتوفر pillow دون بقية مكتبات الطباعة الحرارية فتبقى ميزة
@@ -278,7 +310,7 @@ except Exception:
 import urllib.request   # ★ إضافة (إصدار 10): جلب التحديث — المكتبة القياسية وحدها
 import threading        # ★ إضافة (إصدار 10): فحص خلفي لا يجمّد الواجهة أبداً
 
-VERSION = "2.8"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
+VERSION = "2.9"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
 UPDATE_VERSION_URL = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/version.txt"
 UPDATE_FILE_URL    = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/main.py"
 # ★ إضافة (الإصدار 15 — الجزء الثاني): ملاحظات الإصدارات (changelog) —
@@ -1685,10 +1717,19 @@ def print_report_lines(printer_name, lines, job_title="تقرير"):
     كل فشل يعرض رسالة عربية واضحة ويسجل في error_log — وترجع True عند
     نجاح إرسال المهمة إلى الطابعة"""
     try:
-        if not PRINT_LIBS_OK:
-            messagebox.showerror("الطباعة غير متاحة", PRINT_LIBS_MSG)
+        # ★ تعديل مصرح به (الإصدار 19 — القسم 1 — البند أ): رسالة «الطباعة
+        # غير متاحة» الثابتة استُبدلت بنافذة التثبيت التلقائي الجديدة — نفس
+        # المكان ونفس المنطق تماماً (فحص عند كل محاولة طباعة، والمكتبات ناقصة
+        # = لا تتم الطباعة ويرجع False)، والجديد أنها تقدّم التثبيت بنقرة
+        # واحدة ثم إعادة تشغيل تلقائية فتعمل الطباعة بلا أي إعداد يدوي
+        if not check_print_libs():
+            open_print_libs_install_dialog()
             return False
         name = (printer_name or "").strip()
+        # ★ إضافة (الإصدار 19 — القسم 2 — البند 4): كشف تلقائي للطابعة عند
+        # محاولة الطباعة — المحفوظ الصالح لا يُمس أبداً، والفراغ أو المفقود
+        # من قائمة ويندوز (فُكّت أو تغيّر اسمها) يُكتشف بديل ويُحفظ تلقائياً
+        name = auto_detect_printer(name) or name
         if not name:
             messagebox.showerror("لا توجد طابعة مختارة",
                 "لم يتم اختيار طابعة بعد.\n\n"
@@ -1710,6 +1751,331 @@ def print_report_lines(printer_name, lines, job_title="تقرير"):
         messagebox.showerror("فشل الطباعة",
             "حدث خطأ أثناء الطباعة:\n\n" + str(e) + "\n\nسُجل الخطأ في error_log.txt")
         return False
+
+# ═════════════════════════════════════════════════════
+# ★★★ إضافة (الإصدار 19): التثبيت التلقائي للمكتبات + كشف الطابعة ★★★
+#
+# السيناريو المستهدف (الربط بتوزيع التحديثات — البند 5): جهاز جديد ثُبّت
+# عليه البرنامج → التحديث التلقائي يوصله بأحدث نسخة → عند أول فتح:
+# الفحص الصامت للمكتبات يخزّن النتيجة بالذاكرة ويظهر للمدير وحده شريطاً
+# أصفر رفيعاً «انقر للتثبيت التلقائي» + كشف الطابعة يملأ الإعداد تلقائياً
+# (حرارية EPSON/TM/POS أو الافتراضية) → فتعمل الطباعة على ذلك الجهاز
+# فوراً بلا أي خطوة يدوية إطلاقاً
+# ═══════════════════════════════════════════════════
+PRINT_APP = None        # مرجع النافذة الرئيسية — يُضبط عند بدء التشغيل في _print_setup_startup
+PRINT_INSTALL_CMD = "pip install pillow arabic-reshaper python-bidi"   # البديل اليدوي الجاهز للنسخ
+PRINT_DETECT_STATE = {"warned_no_printer": False, "last_notified": None}   # ذاكرة الجلسة: لا تكرار إزعاج
+
+def get_default_printer():
+    """★ إضافة (الإصدار 19 — القسم 2): اسم الطابعة الافتراضية في ويندوز عبر
+    GetDefaultPrinterW (ctypes) — ترجع الاسم أو "" عند أي فشل/على غير ويندوز،
+    ولا تسبب أي خطأ أبداً (نفس نهج get_windows_printers القائم)"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        if os.name != "nt":
+            return ""
+        winspool = ctypes.WinDLL("winspool.drv", use_last_error=True)
+        winspool.GetDefaultPrinterW.argtypes = [wintypes.LPWSTR,
+                                                ctypes.POINTER(wintypes.DWORD)]
+        winspool.GetDefaultPrinterW.restype = wintypes.BOOL
+        need = wintypes.DWORD(0)
+        winspool.GetDefaultPrinterW(None, ctypes.byref(need))   # استعلام الحجم أولاً
+        if need.value <= 1:
+            return ""            # لا طابعة افتراضية معينة
+        buf = ctypes.create_unicode_buffer(need.value)
+        if not winspool.GetDefaultPrinterW(buf, ctypes.byref(need)):
+            return ""
+        return buf.value or ""
+    except Exception as e:
+        log_error(e)
+        return ""
+
+def _print_notify(text, kind="ok"):
+    """★ إضافة (الإصدار 19): رسالة صغيرة عابرة أعلى الشاشة (خضراء للنجاح /
+    حمراء للتحذير) تختفي وحدها بعد 6 ثوانٍ — بنفس نمط الملاحظة اللطيفة
+    القائمة قبل 05:00، ولا تكرر الإزعاج أبداً (حراسة الطرف المستدعي)"""
+    try:
+        app = PRINT_APP or getattr(tk, "_default_root", None)
+        if app is None or not app.winfo_exists():
+            return
+        bg, fg, bd = (("#dcfce7", "#166534", "#86efac") if kind == "ok"
+                      else ("#fee2e2", "#991b1b", "#fca5a5"))
+        fr = tk.Frame(app.container, bg=bg, highlightbackground=bd, highlightthickness=1)
+        try:
+            fr.pack(fill="x", padx=25, pady=(10, 0), before=app.stats_bar_frame)
+        except Exception:
+            fr.pack(fill="x", padx=25, pady=(10, 0))
+        tk.Label(fr, text=text, bg=bg, fg=fg,
+                 font=("Segoe UI", 10, "bold"), wraplength=880,
+                 justify="right").pack(side="right", fill="x", expand=True, pady=5)
+
+        def _hide():
+            try:
+                fr.destroy()
+            except Exception:
+                pass
+        try:
+            app.after(6000, _hide)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+def auto_detect_printer(current=None):
+    """★ إضافة (الإصدار 19 — القسم 2 — البند 4): الكشف التلقائي للطابعة —
+    يُستدعى عند بدء التشغيل وعند كل محاولة طباعة:
+    — المحفوظ الصالح الموجود بقائمة ويندوز يُرجَع كما هو فوراً (الكشف
+      يملأ الفراغ ويصلح المفقود فقط ولا يتجاوز اختيار المدير اليدوي
+      الصريح أبداً — الإعداد اليدوي بإعدادات الطباعة يبقى سيد الموقف)
+    — الفراغ أو المحفوظ غير الموجود بالقائمة (فُكّت أو تغيّر اسمها):
+      يُبحث أولاً عن اسم يحوي EPSON أو TM- أو POS أو Receipt (أول تطابق)
+      ثم الطابعة الافتراضية في ويندوز — ويُحفظ الاختيار الجديد في
+      settings تلقائياً مع رسالة خضراء صغيرة مرة واحدة وتسجيل بالتدقيق
+    — لا طابعات مثبتة أصلاً: رسالة عربية واضحة مرة واحدة فقط (لا تكرر
+      الإزعاج) ويُرجع المحفوظ كما كان"""
+    saved = (current or "").strip() or (get_setting("printer_name") or "").strip()
+    printers = get_windows_printers()
+    if saved and saved in printers:
+        return saved                    # صالح — لا يُمس إطلاقاً
+    if not printers:
+        if not PRINT_DETECT_STATE["warned_no_printer"]:
+            PRINT_DETECT_STATE["warned_no_printer"] = True
+            _print_notify("لا توجد طابعة مثبتة على هذا الجهاز — "
+                          "ثبّت تعريف الطابعة أولاً من الشركة المصنعة", "warn")
+        return saved or None
+    detected = None
+    for p in printers:
+        up = p.upper()
+        if ("EPSON" in up) or ("TM-" in up) or ("POS" in up) or ("RECEIPT" in up):
+            detected = p
+            break
+    if detected is None:
+        detected = get_default_printer()          # لا حرارية → الافتراضية
+    if not detected:
+        return saved or None                      # لا افتراضية أيضاً — أبقِ الوضع
+    if detected == saved:
+        return saved
+    set_setting("printer_name", detected)
+    audit("كشف طابعة تلقائي", f"تم اختيار الطابعة تلقائياً: {detected}")
+    if PRINT_DETECT_STATE["last_notified"] != detected:
+        PRINT_DETECT_STATE["last_notified"] = detected
+        _print_notify(f"✅ تم اختيار الطابعة تلقائياً: {detected}", "ok")
+    return detected
+
+def _print_install_packages(user_flag=False):
+    """★ إضافة (الإصدار 19 — القسم 1 — البند ٢ب): تنفيذ أمر التثبيت من نفس
+    بايثون البرنامج حرفياً كما تنص المواصفة —
+    subprocess.run([sys.executable, "-m", "pip", "install",
+    "pillow", "arabic-reshaper", "python-bidi"], capture_output)
+    مع سقف أمان 5 دقائق كي لا يعلق التثبيت إلى الأبد إن تعطل الاتصال —
+    يرجع (رمز الخروج، المخرجات نصاً)"""
+    cmd = [sys.executable, "-m", "pip", "install"]
+    if user_flag:
+        cmd.append("--user")
+    cmd += ["pillow", "arabic-reshaper", "python-bidi"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=300)
+        out = ((r.stdout or b"") + b"\n" + (r.stderr or b"")).decode("utf-8", "replace")
+        return r.returncode, out
+    except subprocess.TimeoutExpired:
+        return 1, "timeout"
+    except Exception as e:
+        return 1, str(e)
+
+def _print_install_fail_reason(rc, out):
+    """★ إضافة (الإصدار 19 — القسم 1 — البند ٢هـ): سبب عربي واضح من مخرجات
+    pip — رسالة يفهمها المستخدم لا جدار نصوص تقني"""
+    o = (out or "").lower()
+    if (out or "") == "timeout":
+        return ("استغرق التثبيت أكثر من 5 دقائق وأُوقف تلقائياً — "
+                "تحقق من اتصال الإنترنت ثم أعد المحاولة")
+    if "no module named pip" in o:
+        return ("بايثون على هذا الجهاز بلا pip — ثبّت pip أولاً ثم نفّذ الأمر اليدوي أدناه")
+    if any(k in o for k in ("could not find a version", "no matching distribution",
+                            "retrying", "connection", "getaddrinfo",
+                            "network", "temporary failure", "timed out")):
+        return ("تعذر الوصول لخدمة التنزيل — تحقق من اتصال الإنترنت ثم أعد المحاولة")
+    if any(k in o for k in ("access is denied", "permission denied", "errno 13")):
+        return ("فشل التثبيت لصلاحيات الجهاز — نفّذ الأمر اليدوي أدناه من «موجه الأوامر» كمسؤول")
+    if rc == 0:
+        return ("انتهى الأمر بلا خطأ لكن الاستيراد الفعلي فشل — نفّذ الأمر اليدوي "
+                "أدناه وتأكد أنه نفس بايثون الذي يشغّل البرنامج")
+    return "فشل التثبيت — نفّذ الأمر اليدوي أدناه من «موجه الأوامر» ثم أعد تشغيل البرنامج"
+
+def open_print_libs_install_dialog():
+    """★ إضافة (الإصدار 19 — القسم 1 — البند ٢أ) مع تعديل مصرح به (البند أ):
+    نافذة التثبيت التلقائي الجديدة — بديل رسالة «الطباعة غير متاحة» القديمة
+    في نفس مكانها ومنطقها تماماً (تُفتح عند محاولة طباعة والمكتبات ناقصة
+    فلا تتم الطباعة ويرجع False)، وتُفتح أيضاً من الشريط الأصفر للمدير عند
+    بدء التشغيل — القاعدة الذهبية: الأزرار السفلية تُحزم أولاً"""
+    app = PRINT_APP or getattr(tk, "_default_root", None)
+    if app is None:
+        return False
+    win = app.register_window(tk.Toplevel(app))
+    win.title("الطباعة الحرارية")
+    win.configure(bg=CARD)
+    win.transient(app)
+    win.resizable(False, False)
+    try:
+        win.grab_set()
+    except Exception:
+        pass
+    # ---------- شريط الأزرار السفلي أولاً (القاعدة الذهبية) ----------
+    fr_btns = tk.Frame(win, bg=CARD)
+    fr_btns.pack(side="bottom", fill="x", padx=18, pady=(6, 16))
+    b_go = app.mk_btn(fr_btns, "⚙️ تثبيت تلقائي الآن",
+                      lambda: _run_print_install(win), GREEN)
+    b_go.pack(side="right", padx=6)
+    add_tip(b_go, "تثبيت المكتبات الثلاث تلقائياً عبر الإنترنت (أقل من دقيقة) "
+                  "ثم التحقق الفعلي وإعادة تشغيل تلقائية — تعمل الطباعة بعدها مباشرة")
+    b_no = app.mk_btn(fr_btns, "لاحقاً", win.destroy, "#475569")
+    b_no.pack(side="right", padx=6)
+    add_tip(b_no, "إغلاق النافذة الآن — تُعرض من جديد عند محاولة طباعة جديدة فقط")
+    # ---------- المحتوى فوق الشريط الثابت ----------
+    tk.Label(win, text="🖨", bg=CARD, fg=DARK,
+             font=("Segoe UI", 26)).pack(pady=(16, 2))
+    tk.Label(win, text="مكتبات الطباعة غير مثبتة على هذا الجهاز", bg=CARD,
+             fg=DARK, font=FT, wraplength=430, justify="center").pack(pady=(2, 4))
+    tk.Label(win, text="التثبيت تلقائي الآن؟ (يحتاج إنترنت — أقل من دقيقة)",
+             bg=CARD, fg=DARK, font=F, wraplength=430, justify="center").pack()
+    tk.Label(win, text="بعد التثبيت سيعاد تشغيل البرنامج تلقائياً وتعمل الطباعة",
+             bg=CARD, fg=GRAY, font=("Segoe UI", 10), wraplength=430,
+             justify="center").pack(pady=(2, 10))
+    place_window(win, 500, 250)
+    return True
+
+def _run_print_install(win):
+    """★ إضافة (الإصدار 19 — القسم 1 — البندان ٢ب-٢و): بدء التثبيت الفعلي —
+    نافذة تقدم بنص المرحلة والتنفيذ بخيط خلفي كي لا تتجمد الواجهة، ثم:
+    نجاح → رسالة ✅ وإعادة تشغيل تلقائية بنفس آلية نظام التحديث القائم،
+    فشل → سبب عربي واضح + الأمر اليدوي جاهز للنسخ والبرنامج يستمر عادي"""
+    app = PRINT_APP or getattr(tk, "_default_root", None)
+    if app is None:
+        try:
+            win.destroy()
+        except Exception:
+            pass
+        return
+    try:
+        for ch in win.winfo_children():
+            ch.destroy()
+    except Exception:
+        pass
+    win.title("جارٍ التثبيت")
+    tk.Label(win, text="⚙️", bg=CARD, fg=DARK,
+             font=("Segoe UI", 26)).pack(pady=(16, 2))
+    tk.Label(win, text="جارٍ التثبيت... لا تغلق البرنامج", bg=CARD, fg=DARK,
+             font=FT, wraplength=430, justify="center").pack(pady=(2, 4))
+    lbl_stage = tk.Label(win, text="١) جارٍ تثبيت المكتبات عبر pip — من نفس بايثون البرنامج",
+                         bg=CARD, fg=GRAY, font=F, wraplength=430, justify="center")
+    lbl_stage.pack(pady=(2, 12))
+    place_window(win, 500, 230)
+
+    st = {"phase": "pip", "rc": 0, "out": "", "ok": False}
+
+    def worker():
+        # (ب) التنفيذ من نفس بايثون البرنامج — ثم (ج) إعادة المحاولة بـ --user
+        # تلقائياً عند فشل المسار العادي (يشمل حالات الصلاحيات وغيرها) قبل
+        # الإعلان عن الفشل — والمخرجات تُجمع من المسارين معاً
+        rc, out = _print_install_packages(False)
+        if rc != 0:
+            st["phase"] = "user"
+            rc2, out2 = _print_install_packages(True)
+            st["rc"] = rc2
+            st["out"] = (out2 or "") + "\n-----\n" + (out or "")
+        else:
+            st["rc"], st["out"] = rc, out
+        # (د) التحقق الفعلي بإعادة الاستيراد داخل نفس العملية
+        st["phase"] = "verify"
+        st["ok"] = check_print_libs()
+        st["phase"] = "done"
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    shown = {"user": False, "verify": False}
+
+    def poll():
+        try:
+            if not win.winfo_exists():
+                return          # أُغلقت النافذة (تبديل مستخدم) — تتوقف المتابعة بهدوء
+            ph = st["phase"]
+            if ph == "user" and not shown["user"]:
+                shown["user"] = True
+                lbl_stage.config(text="٢) المسار العادي لم ينجح — إعادة المحاولة "
+                                      "بصلاحيات المستخدم (--user)...")
+            elif ph in ("verify", "done") and not shown["verify"]:
+                shown["verify"] = True
+                lbl_stage.config(text="٣) اكتمل الأمر — التحقق الفعلي بإعادة الاستيراد...")
+            if ph != "done":
+                win.after(200, poll)
+                return
+            # ---------- النهاية: نجاح أو فشل ----------
+            if st["ok"]:
+                audit("تثبيت تلقائي لمكتبات الطباعة",
+                      "نجح — والتحقق الفعلي بالاستيراد تم"
+                      + (" (بعد إعادة المحاولة بـ --user)" if shown["user"] else ""))
+                for ch2 in win.winfo_children():
+                    ch2.destroy()
+                tk.Label(win, text="✅", bg=CARD, fg=GREEN,
+                         font=("Segoe UI", 26)).pack(pady=(20, 2))
+                tk.Label(win, text="تم التثبيت! جارٍ إعادة التشغيل...", bg=CARD,
+                         fg=GREEN, font=FT, wraplength=430, justify="center").pack(pady=(2, 4))
+                tk.Label(win, text="سيُطلب تسجيل الدخول من جديد — والطباعة تعمل مباشرة بعده",
+                         bg=CARD, fg=GRAY, font=("Segoe UI", 10), wraplength=430,
+                         justify="center").pack(pady=(2, 12))
+                place_window(win, 500, 230)
+                app.after(1600, lambda: app._restart_after_print_install())
+            else:
+                reason = _print_install_fail_reason(st["rc"], st["out"])
+                audit("تثبيت تلقائي لمكتبات الطباعة", "فشل — " + reason)
+                # شريط الإغلاق السفلي أولاً (القاعدة الذهبية في إعادة البناء)
+                fr_ok = tk.Frame(win, bg=CARD)
+                fr_ok.pack(side="bottom", fill="x", padx=18, pady=(6, 14))
+                b_ok = app.mk_btn(fr_ok, "حسناً", win.destroy, "#475569")
+                b_ok.pack(side="right", padx=6)
+                add_tip(b_ok, "إغلاق النافذة — البرنامج يستمر بشكل كامل والطباعة "
+                              "تُعاود المحاولة عند أول طباعة جديدة")
+                tk.Label(win, text="⚠️", bg=CARD, fg=RED,
+                         font=("Segoe UI", 26)).pack(pady=(18, 2))
+                tk.Label(win, text="لم ينجح التثبيت التلقائي", bg=CARD, fg=RED,
+                         font=FT, wraplength=430, justify="center").pack(pady=(2, 4))
+                tk.Label(win, text=reason, bg=CARD, fg=DARK, font=F,
+                         wraplength=430, justify="center").pack(pady=(2, 4))
+                tail = (st["out"] or "").strip()[-180:]
+                if tail:
+                    tk.Label(win, text=tail, bg=CARD, fg=GRAY,
+                             font=("Segoe UI", 8), wraplength=430,
+                             justify="center").pack(pady=(2, 6))
+                tk.Label(win, text="البديل اليدوي — انسخ الأمر ونفّذه في «موجه الأوامر» "
+                                  "ثم أعد تشغيل البرنامج:", bg=CARD, fg=DARK,
+                         font=FB, wraplength=430, justify="center").pack(pady=(6, 2))
+                row = tk.Frame(win, bg=CARD)
+                row.pack(fill="x", padx=18, pady=(0, 4))
+                e_cmd = tk.Entry(row, font=("Consolas", 10), justify="center",
+                                 relief="solid", bd=1, width=44)
+                e_cmd.insert(0, PRINT_INSTALL_CMD)
+                e_cmd.config(state="readonly")
+                e_cmd.pack(side="right", padx=6, ipady=3)
+                lbl_cp = tk.Label(row, text="", bg=CARD, fg=GREEN,
+                                  font=("Segoe UI", 9, "bold"))
+                lbl_cp.pack(side="right")
+
+                def _copy():
+                    try:
+                        app.clipboard_clear()
+                        app.clipboard_append(PRINT_INSTALL_CMD)
+                        lbl_cp.config(text="تم النسخ ✔")
+                    except Exception:
+                        lbl_cp.config(text="تعذر النسخ")
+                b_cp = app.mk_btn(row, "📋 نسخ", _copy, ACCENT)
+                b_cp.pack(side="right", padx=6)
+                add_tip(b_cp, "نسخ أمر التثبيت اليدوي إلى الحافظة")
+                place_window(win, 520, 420)
+        except Exception:
+            pass
+
+    win.after(200, poll)
 
 def build_day_report_lines(store_name, d, ops_count, cash, netw, rets, net,
                            closed_at, closed_by, reprint=False):
@@ -2967,16 +3333,10 @@ class App(tk.Tk):
             ensure_admin_account()
         except Exception:
             pass
-        # ★ إضافة (إصدار 6): فحص مكتبات الطباعة عند بدء التشغيل — إن لم تتوفر
-        # والطباعة معدّة مسبقاً (طابعة محفوظة أو طباعة تلقائية مفعلة) تظهر
-        # ملاحظة عربية بأمر التثبيت مع ملاحظات بدء التشغيل، والبرنامج يعمل
-        # طبيعياً تماماً — وبلا أي إعداد للطباعة لا تظهر أي رسالة إزعاج
-        try:
-            if not PRINT_LIBS_OK and (get_setting("printer_name") or
-                                      get_setting("auto_print_daily") == "1"):
-                note("⚠ الطباعة الحرارية غير متاحة في هذا التشغيل.\n\n" + PRINT_LIBS_MSG)
-        except Exception:
-            pass
+        # ★ تعديل مصرح به (الإصدار 19 — القسم 1 — البند ب): ملاحظة بدء
+        # التشغيل القديمة (التي كانت تعرض أمر التثبيت اليدوي لأي مستخدم)
+        # استُبدلت بالكشف الصامت الجديد + الشريط الأصفر الرفيع للمدير فقط —
+        # انظر _print_setup_startup() المستدعاة بعد اكتمال بناء الواجهة أدناه
         self.role = role          # ★ إضافة (ميزة 1): دور المستخدم الحالي (مدير/بائع)
         self.user_name = user_name   # ★ إضافة (إصدار 3 — ميزة 2): اسم المستخدم الحالي
         self.user_role = role         # ★ إضافة (إصدار 3 — ميزة 2): دور المستخدم الحالي
@@ -3080,6 +3440,15 @@ class App(tk.Tk):
         except Exception as e:
             log_error(e, sys.exc_info()[2])
         self.refresh_business_day_ui()
+        # ★ إضافة (الإصدار 19 — البندان أ+ب المصرح بهما): فحص مكتبات الطباعة
+        # عند بدء التشغيل مرة واحدة صمتاً (النتيجة بالذاكرة) + كشف الطابعة
+        # تلقائياً — وإن كانت المكتبات ناقصة يظهر للمدير فقط شريط أصفر رفيع
+        # «انقر للتثبيت التلقائي» (يُستدعى هنا بعد اكتمال بناء الواجهة كي يجد
+        # الحاوية والشريط الإحصائي جاهزين) فيُثبَّت من البداية دون انتظار أول طباعة
+        try:
+            self._print_setup_startup()
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
         # ★ إضافة (الإصدار 16 — القسم 1-2): فحص صامت لإحصاءات النشاط الحساس
         # آخر 7 أيام بعد الدخول مباشرة (after) — للمدير/الأدمن فقط: إن وُجد
         # نشاط يستحق المراجعة ظهرت بطاقة تنبيه أعلى لوحة المعلومات، وإلا
@@ -8948,6 +9317,87 @@ class App(tk.Tk):
             messagebox.showinfo("أعد التشغيل يدوياً",
                 "تم التحديث بنجاح — أغلق البرنامج وافتحه من جديد لتفعيل "
                 "الإصدار الجديد.")
+            self.exit_app()
+            return
+        try:
+            # إطلاق العملية الجديدة أولاً — قبل الخروج النظيف من القديمة
+            subprocess.Popen([sys.executable, os.path.abspath(__file__)])
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+            messagebox.showwarning("تعذر التشغيل التلقائي",
+                "أعد فتح البرنامج يدوياً هذه المرة فقط.")
+            self.exit_app()      # خروج عادي نظيف — لا انهيار أبداً
+            return
+        self.exit_app()          # الخروج النظيف — النسخة الاحتياطية كاملة كما هي
+
+    # ═══════════════════════════════════════════════════════════
+    # ★★★ إضافات (الإصدار 19): خطاف بدء التشغيل + الشريط الأصفر ★★★
+    # ═══════════════════════════════════════════════════════════
+    def _print_setup_startup(self):
+        """★ إضافة (الإصدار 19 — البندان أ+ب المصرح بهما): خطاف بدء التشغيل —
+        فحص مكتبات الطباعة مرة واحدة صمتاً (النتيجة بالذاكرة) + كشف الطابعة
+        تلقائياً + الشريط الأصفر الرفيع للمدير فقط إن كانت المكتبات ناقصة.
+        السيناريو المستهدف (الربط بتوزيع التحديثات — البند 5): جهاز جديد →
+        تحديث تلقائي → أول فتح → هذا الخطاف يجعل الطباعة جاهزة على ذلك
+        الجهاز بلا أي خطوة يدوية إطلاقاً"""
+        global PRINT_APP
+        PRINT_APP = self            # مرجع الوحدة لواجهات الطباعة الجديدة
+        try:
+            check_print_libs()      # صامت — تخزين النتيجة بالذاكرة فقط
+        except Exception:
+            pass
+        try:
+            auto_detect_printer()   # يملأ الفراغ/يصلح المفقود + رسالة مرة واحدة
+        except Exception:
+            pass
+        if not PRINT_LIBS_OK and manager_level(self.role):
+            self._show_print_libs_bar()
+
+    def _show_print_libs_bar(self):
+        """★ إضافة (الإصدار 19 — القسم 1 — البند 3): الشريط الأصفر الرفيع
+        أعلى الشاشة (كشريط التحديث) — يظهر للمدير فقط عند بدء التشغيل إن
+        كانت مكتبات الطباعة ناقصة، وزره يفتح نافذة التثبيت التلقائي فيُثبَّت
+        من البداية دون انتظار أول طباعة، ويختفي من تلقاء نفسه بعد التثبيت
+        لأن إعادة التشغيل تفتح جلسة والمكتبات صارت موجودة"""
+        if getattr(self, "print_libs_bar", None) is not None:
+            try:
+                self.print_libs_bar.destroy()
+            except Exception:
+                pass
+            self.print_libs_bar = None
+        bg, fg = "#fef9c3", "#854d0e"
+        bar = tk.Frame(self.container, bg=bg, highlightbackground="#fde047",
+                       highlightthickness=1)
+        try:                  # فوق الشريط الإحصائي مباشرة — مثل شريط التحديث
+            bar.pack(fill="x", padx=25, pady=(10, 0), before=self.stats_bar_frame)
+        except Exception:
+            bar.pack(fill="x", padx=25, pady=(10, 0))
+        lbl = tk.Label(bar, text="🖨 مكتبات الطباعة غير مثبتة — انقر للتثبيت التلقائي",
+                       bg=bg, fg=fg, font=("Segoe UI", 10, "bold"), cursor="hand2")
+        lbl.pack(side="right", padx=(4, 12), pady=4)
+        lbl.bind("<Button-1>", lambda e: open_print_libs_install_dialog())
+        add_tip(lbl, "فتح نافذة التثبيت التلقائي لمكتبات الطباعة")
+        b_ins = tk.Button(bar, text="⚙️ تثبيت تلقائي", command=open_print_libs_install_dialog,
+                          bg=GREEN, fg="white", activebackground=GREEN,
+                          activeforeground="white", font=("Segoe UI", 9, "bold"),
+                          bd=0, cursor="hand2", padx=12, pady=2, highlightthickness=0)
+        b_ins.pack(side="left", padx=(12, 6), pady=3)
+        add_tip(b_ins, "تثبيت مكتبات الطباعة تلقائياً عبر الإنترنت (أقل من دقيقة) "
+                       "ثم إعادة تشغيل تلقائية — تعمل الطباعة بعدها مباشرة")
+        self.print_libs_bar = bar
+
+    def _restart_after_print_install(self):
+        """★ إضافة (الإصدار 19 — القسم 1 — البند 2د): إعادة التشغيل التلقائية
+        الآمنة بعد نجاح التثبيت — بنفس آلية إعادة التشغيل القائمة بنظام
+        التحديث حرفياً: إطلاق العملية الجديدة أولاً (subprocess.Popen) ثم
+        الخروج النظيف عبر exit_app — لا تُمس القاعدة ولا النسخ الاحتياطية
+        ولا الإعدادات ولا سجل التدقيق إطلاقاً، ويُفقد تسجيل الدخول فقط"""
+        audit("إعادة تشغيل تلقائية بعد تثبيت مكتبات الطباعة",
+              "نجح التثبيت والتحقق الفعلي — الطباعة تعمل مباشرة بعدها")
+        if getattr(sys, "frozen", False):
+            messagebox.showinfo("أعد التشغيل يدوياً",
+                "تم تثبيت مكتبات الطباعة — أغلق البرنامج وافتحه من جديد "
+                "لتعمل الطباعة.")
             self.exit_app()
             return
         try:
