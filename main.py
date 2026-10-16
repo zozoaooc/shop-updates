@@ -278,7 +278,7 @@ except Exception:
 import urllib.request   # ★ إضافة (إصدار 10): جلب التحديث — المكتبة القياسية وحدها
 import threading        # ★ إضافة (إصدار 10): فحص خلفي لا يجمّد الواجهة أبداً
 
-VERSION = "2.6"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
+VERSION = "2.7"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
 UPDATE_VERSION_URL = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/version.txt"
 UPDATE_FILE_URL    = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/main.py"
 # ★ إضافة (الإصدار 15 — الجزء الثاني): ملاحظات الإصدارات (changelog) —
@@ -290,6 +290,23 @@ GITHUB_TOKEN = "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"   # يملؤه الم�
 # وعند فراغه: يجرّب بدون ترويسة — والفشل في الحالتين صمت تام
 UPDATE_CHECK_TIMEOUT = 5      # مهلة فحص رقم الإصدار (ثوانٍ)
 UPDATE_DOWNLOAD_TIMEOUT = 30  # مهلة تنزيل ملف التحديث (ثوانٍ)
+
+# ═══════════════════════════════════════════════════════════
+# ★★★ إضافة (الإصدار 17 — التعديلان 4+5): حد اليوم التجاري 05:00 فجراً 🌙 ★★★
+# كل الأوقات بنظام 24 ساعة — اليوم التجاري يبدأ 05:00
+# أي عملية قبل 05:00 صباحاً (00:00 حتى 04:59) تنتمي لتاريخ «أمس» التجاري —
+# ومن 05:00 فما فوق لليوم الجاري، واليوم المفتوح يمتد حتى 05:00 القادمة
+# ═══════════════════════════════════════════════════════════
+BUSINESS_DAY_START_HOUR = 5   # ★ إضافة (الإصدار 17 — التعديل 4): ساعة بدء اليوم التجاري فجراً
+
+def business_now_date():
+    """★ إضافة (الإصدار 17 — التعديل 4): تاريخ اليوم التجاري للحظة الحالية —
+    قبل 05:00 فجراً يعود بتاريخ الأمس (عمليات ما قبل الفجر تُسجَّل عليه)،
+    ومن 05:00 فما فوق يعود بتاريخ اليوم الجاري"""
+    t = date.today()
+    if datetime.now().hour < BUSINESS_DAY_START_HOUR:
+        return date.fromordinal(t.toordinal() - 1).isoformat()
+    return t.isoformat()
 
 # ---------- ★ مسار البيانات: بجانب البرنامج دائماً (أو مجلد آمن إذا كان الموقع محمياً) ----------
 def data_dir():
@@ -2443,6 +2460,130 @@ def build_period_report_lines(store_name, d_from, d_to, rows):
     ]
     return lines
 
+# ═══════════════════════════════════════════════════════════
+# ★★★ إضافة (الإصدار 17 — الإضافة 1): تقرير البائعين الشامل للطباعة 🖨️ ★★★
+# متاح للجميع (البائع والمدير) — نفس بنية تقارير اليوم/الفترة القائمة تماماً:
+# أسطر حرارية للطابعة 80mm وملف PDF مقاس A4 — من نافذة المعاينة قبل الطباعة
+# ═══════════════════════════════════════════════════════════
+def build_sellers_report_lines(store_name, d_from, d_to, rows, tot, printed_by):
+    """★ إضافة (الإصدار 17 — الإضافة 1): أسطر تقرير البائعين الشامل للطابعة
+    الحرارية 80mm — ترويسة اسم المحل والفترة ووقت الطباعة ثم سطر لكل بائع
+    (الاسم وعدد العمليات والصافي، وتحته نقداً وشبكة ومرتجعاته) ثم فاصل
+    والإجمالي النهائي (إجمالي المحل) بخط أكبر وسطر «طبعه بواسطة [الاسم]»"""
+    lines = [
+        ("title", store_name or "نظام المبيعات والمُرتجعات"),
+        ("sep", "="),
+        ("head", "تقرير البائعين"),
+        ("center", f"الفترة: من {d_from or 'البداية'} إلى {d_to or 'اليوم'}"),
+        ("center", "وقت الطباعة: " + datetime.now().strftime("%Y-%m-%d %H:%M")),
+        ("blank",),
+    ]
+    for r in rows:
+        lines.append(("row", f"{r['seller']} — {r['n']} عمليات",
+                      f"الصافي {money(r['net'])}"))
+        lines.append(("center", f"نقداً {money(r['cash'])} — شبكة {money(r['netw'])}"
+                                f" — مرتجعات {money(r['rets'])}"))
+    lines += [
+        ("sep", "─"),
+        ("big", "الإجمالي النهائي — إجمالي المحل", money(tot["net"])),
+        ("center", f"عمليات {tot['n']} — نقداً {money(tot['cash'])}"
+                    f" — شبكة {money(tot['netw'])} — مرتجعات {money(tot['rets'])}"),
+        ("blank",),
+        ("center", f"طبعه بواسطة: {printed_by}"),
+        ("blank",),
+    ]
+    return lines
+
+def build_sellers_report_pdf(path, store_name, d_from, d_to, rows, tot, printed_by):
+    """★ إضافة (الإصدار 17 — الإضافة 1): تقرير البائعين الشامل كملف PDF مقاس
+    A4 قياسي — بنفس بنية تقرير الفترة القائم تماماً: جدول البائعين (البائع/
+    عدد العمليات/نقداً/شبكة/المرتجعات/الصافي) وصف إجمالي المحل بخلفية مميزة،
+    وتذييل «طُبع بواسطة» بالتاريخ والوقت (نظام 24 ساعة)، مع ترقيم صفحات
+    تلقائي إذا زاد البائعون عن صفحة"""
+    font = ensure_pdf_font()
+    if font is None:
+        raise RuntimeError("لم يتم العثور على خط عربي (tahoma / arial) لتوليد ملف PDF")
+    W, H = _PDF_A4
+    M = 42
+    c = _pdf_canvas.Canvas(path, pagesize=_PDF_A4)
+    # أعمدة الجدول من اليمين لليسار: البائع | عدد العمليات | نقداً | شبكة | المرتجعات | الصافي
+    col_titles = ["البائع", "عدد العمليات", "نقداً", "شبكة", "المرتجعات", "الصافي"]
+    col_w = [110, 66, 80, 80, 80, 92]
+    xs = []                                 # حدود كل عمود (من اليمين إلى اليسار)
+    x = W - M
+    for wd in col_w:
+        xs.append((x - wd, x))
+        x -= wd
+
+    def ar(cx, cy, t, size=11, bold=False, align="c", col=(0.06, 0.09, 0.16)):
+        c.setFont(pdf_font(bold), size)
+        c.setFillColorRGB(*col)
+        s = shape_ar(t)
+        if align == "c":
+            c.drawCentredString(cx, cy, s)
+        elif align == "l":
+            c.drawString(cx, cy, s)
+        else:
+            c.drawRightString(cx, cy, s)
+
+    page_no = [1]
+
+    def footer():
+        ar(W / 2, 30, f"صفحة {page_no[0]}", 9, False, "c", (0.6, 0.64, 0.7))
+
+    def head_block(first):
+        y = H - 78
+        if first:
+            ar(W / 2, y, store_name or "نظام المبيعات والمُرتجعات", 20, True, "c", (0.09, 0.16, 0.38))
+            y -= 26
+        ar(W / 2, y, "تقرير البائعين — أداء جميع البائعين", 17, True)
+        y -= 20
+        ar(W / 2, y, f"الفترة: من {d_from or 'البداية'} إلى {d_to or 'اليوم'} — {len(rows)} بائعاً",
+           11, False, "c", (0.36, 0.42, 0.50))
+        y -= 28
+        c.setFillColorRGB(0.09, 0.16, 0.24)          # رأس الجدول بخلفية داكنة
+        c.rect(M, y - 7, W - 2 * M, 26, fill=1, stroke=0)
+        for i, t in enumerate(col_titles):
+            ar((xs[i][0] + xs[i][1]) / 2, y, t, 10.5, True, "c", (1, 1, 1))
+        return y - 33
+
+    y = head_block(True)
+    for idx, r in enumerate(rows):
+        if y < 84:                                    # صفحة جديدة عند الامتلاء
+            footer()
+            c.showPage()
+            page_no[0] += 1
+            y = head_block(False)
+        if idx % 2 == 1:                              # تظليل متناوب للصفوف
+            c.setFillColorRGB(0.955, 0.968, 0.984)
+            c.rect(M, y - 6, W - 2 * M, 24, fill=1, stroke=0)
+        vals = [r["seller"], str(r["n"]), money(r["cash"]), money(r["netw"]),
+                money(r["rets"]), money(r["net"])]
+        for i, v in enumerate(vals):
+            ar((xs[i][0] + xs[i][1]) / 2, y, v, 10, i == 5 and r["net"] < 0, "c",
+               (0.75, 0.08, 0.08) if (i == 5 and r["net"] < 0) else (0.06, 0.09, 0.16))
+        y -= 24
+    if y < 84:                                        # صف الإجمالي في صفحة جديدة إذا لزم
+        footer()
+        c.showPage()
+        page_no[0] += 1
+        y = head_block(False)
+    c.setFillColorRGB(0.87, 0.92, 1.0)                # صف إجمالي المحل المميز
+    c.rect(M, y - 7, W - 2 * M, 28, fill=1, stroke=0)
+    tot_vals = [tot["seller"], str(tot["n"]), money(tot["cash"]), money(tot["netw"]),
+                money(tot["rets"]), money(tot["net"])]
+    for i, v in enumerate(tot_vals):
+        ar((xs[i][0] + xs[i][1]) / 2, y, v, 10.5, True, "c",
+           (0.02, 0.35, 0.20) if (i == 5 and tot["net"] >= 0)
+           else ((0.75, 0.08, 0.08) if i == 5 else (0.06, 0.09, 0.16)))
+    y -= 42
+    ar(W / 2, y, f"طُبع بواسطة: {printed_by} — "
+       + datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 10, False, "c", (0.36, 0.42, 0.50))
+    footer()
+    c.showPage()
+    c.save()
+    return path
+
 # ================== التطبيق ==================
 # ═══════════════════════════════════════════════════════════
 # ★★★ إضافة (إصدار 10 — نظام التحديث التلقائي الصامت): دوال مستقلة ★★★
@@ -3245,6 +3386,9 @@ class App(tk.Tk):
         self.lbl_bday = tk.Label(bar, text="", bg=BG, fg=GRAY,
                                  font=("Segoe UI", 10, "bold"), anchor="e")
         self.lbl_bday.pack(fill="x", side="top", pady=(0, 3))
+        # ★ إضافة (الإصدار 17 — التعديل 4): تلميح سطر يوم العمل — الحد الفجري
+        add_tip(self.lbl_bday, "اليوم التجاري ينتهي 05:00 فجراً ويبدأ الجديد بعده — "
+                               "العمليات قبل 05:00 تُسجَّل على يوم الأمس التجاري")
         # ★ تعديل (إصدار 5 — نظام الأنواع الثلاثة): الشريط العلوي 5 بطاقات —
         # عدد العمليات (رمادي) / نقداً (أخضر) / شبكة (أزرق) / المرتجعات (أحمر) /
         # الإجمالي (أزرق) — لفصل مبيعات الدرج النقدي عن مبيعات جهاز الشبكة
@@ -3642,6 +3786,14 @@ class App(tk.Tk):
         add_tip(b_bin, "نافذة كل العمليات المحذوفة — استعادة أي صف منها (آخر 50)")
         self.btn_close = self.mk_btn(bar, "🔒 إغلاق اليوم وحفظ التقرير", self.close_day, ORANGE)
         self.btn_close.pack(side="left", padx=6)
+        # ★★★ إضافة (الإصدار 17 — الإضافة 1): زر «🖨️ تقرير البائعين» — متاح
+        # للجميع (البائع والمدير): معاينة أداء جميع البائعين ثم طباعتها أو
+        # تصديرها — في شريط عمليات اليوم بجانب زر إغلاق اليوم
+        b_sellers = self.mk_btn(bar, "🖨️ تقرير البائعين", self.open_sellers_report, "#0d9488")
+        b_sellers.pack(side="left", padx=6)
+        add_tip(b_sellers, "تقرير شامل لأداء جميع البائعين (عدد العمليات ونقداً وشبكة "
+                           "والمرتجعات والصافي) — معاينة ثم طباعة حرارية أو A4 أو تصدير Excel، "
+                           "متاح للبائع والمدير")
         # ★ إضافة (الإصدار 14 — الجزء الأول): زر بدء يوم عمل جديد — يحل محل
         # زر الإغلاق عندما لا يوم مفتوح (يديره refresh_business_day_ui)
         self.btn_start_day = self.mk_btn(bar, "▶️ بدء يوم جديد", self.start_new_business_day, GREEN)
@@ -3991,9 +4143,18 @@ class App(tk.Tk):
           عليه بعد منتصف الليل (العمليات تُسجَّل على تاريخه) / إلغاء الدخول
         — لا يوم مخزن → قاعدة جديدة تماماً: يُفتح اليوم بصمت (توافق كامل
           مع الإصدارات السابقة)، أو قاعدة قائمة: سؤال بدء يوم جديد [اليوم]
-          مع خيار تعديل التاريخ يدوياً"""
+          مع خيار تعديل التاريخ يدوياً
+        ★ تعديل مصرح به (الإصدار 17 — التعديل 4 — الاستثناء أ): المقارنات
+        تعمل بحد 05:00 فجراً — الساعة قبل 05:00 ويوم الأمس مفتوح = ما نزال
+        داخل يوم الأمس الذي يمتد حتى 05:00 القادمة فدخول عادي بلا أي سؤال
+        (مع تدقيق وملاحظة لطيفة)، والساعة 05:00 فما فوق ويوم الأمس مفتوح =
+        سؤال الإغلاق/الاستمرار (الاستمرار قرار المدير)، وأي حالة أخرى تبقى
+        على منطق الأسئلة الموجود كما هو"""
         stored = business_day_open()
         today = today_str()
+        # ★ (الإصدار 17 — التعديل 4): تاريخ الأمس وهل نحن قبل حد 05:00 فجراً
+        yesterday = date.fromordinal(date.today().toordinal() - 1).isoformat()
+        before_dawn = datetime.now().hour < BUSINESS_DAY_START_HOUR
         if stored is None:
             with connect() as conn:
                 has_ops = conn.execute("SELECT 1 FROM operations LIMIT 1").fetchone() is not None
@@ -4003,8 +4164,17 @@ class App(tk.Tk):
                 return
             self.ask_start_new_business_day(manual=True)
             return
-        if stored == today or stored > today:
-            return          # نفس اليوم (أو ساعة الجهاز متأخرة) — دخول صامت
+        # ★ (الإصدار 17 — التعديل 4): الدخول الصامت — نفس اليوم (أو ساعة
+        # الجهاز متأخرة) كما كان، وقبلها حالة الفجر الجديدة: قبل 05:00 ويوم
+        # الأمس مفتوح = ما نزال داخل يومه حتى 05:00 القادمة بلا أي سؤال
+        silent = (stored == today or stored > today
+                  or (before_dawn and stored == yesterday))
+        if silent:
+            if before_dawn:
+                audit("بدء تشغيل ضمن حد 05:00",
+                      f"نحن قبل 05:00 — العمليات تُسجَّل على يوم {stored} (ضمن حد 05:00)")
+                self._show_pre_dawn_note(stored)
+            return
         # يوم العمل أقدم من اليوم — إن كان مغلقاً فعلاً فالسؤال بدء يوم جديد مباشرة
         if is_closed(stored):
             try:
@@ -4017,8 +4187,9 @@ class App(tk.Tk):
         if choice == "close":
             self._close_business_day(stored, ask_start=True)
         elif choice == "continue":
-            audit("استمرار يوم عمل", f"{stored} — العمليات بعد منتصف الليل تُسجَّل عليه")
-            # يبقى اليوم القديم مفتوحاً — البيع بعد منتصف الليل يُسجَّل عليه
+            # ★ تعديل مصرح به (الإصدار 17 — التعديل 4): نص التدقيق بالحد الفجري
+            audit("استمرار يوم عمل", f"{stored} — العمليات بعد حد 05:00 فجراً تُسجَّل عليه")
+            # يبقى اليوم القديم مفتوحاً — البيع بعد الحد الفجري يُسجَّل عليه
         else:
             self.exit_app()          # إلغاء الدخول — إغلاق آمن كما عند إلغاء الدخول نفسه
 
@@ -4053,7 +4224,9 @@ class App(tk.Tk):
             win.destroy()
         self.mk_btn(fr, "🔒 إغلاقه الآن كتقرير", lambda: pick("close"), ORANGE).pack(
             side="top", pady=4, ipadx=10)
-        self.mk_btn(fr, "🌙 الاستمرار عليه (بعد منتصف الليل)", lambda: pick("continue"), ACCENT).pack(
+        # ★ تعديل مصرح به (الإصدار 17 — التعديل 4): نص الزر بالحد الفجري —
+        # الاستمرار الآن معناه بعد حد 05:00 فجراً لا بعد منتصف الليل
+        self.mk_btn(fr, "🌙 الاستمرار عليه (بعد حد 05:00 فجراً)", lambda: pick("continue"), ACCENT).pack(
             side="top", pady=4, ipadx=10)
         self.mk_btn(fr, "✖ إلغاء الدخول", lambda: pick("cancel"), "#475569").pack(
             side="top", pady=4, ipadx=10)
@@ -4068,8 +4241,12 @@ class App(tk.Tk):
         """★ إضافة (الإصدار 14 — الجزء الأول): سؤال بدء يوم عمل جديد —
         التاريخ المقترح = اليوم، وإن كان اليوم مغلقاً بالأرشيف فاليوم التالي
         له؛ manual=True يفتح نافذة التاريخ اليدوي (بعد الإغلاق مباشرة أو عند
-        الإقلاع بلا يوم مخزن)، ويرجع True إن صار يوم مفتوح"""
-        propose = today_str()
+        الإقلاع بلا يوم مخزن)، ويرجع True إن صار يوم مفتوح
+        ★ تعديل مصرح به (الإصدار 17 — التعديل 4): التاريخ المقترح صار بحد
+        05:00 فجراً — قبل 05:00 يُقترح تاريخ الأمس (العمليات الفجرية تُسجَّل
+        عليه)، ومن 05:00 فما فوق تاريخ اليوم — مع التعديل اليدوي المتاح"""
+        # ★ (الإصدار 17 — التعديل 4): المقترح = تاريخ اليوم التجاري للحظة الحالية
+        propose = business_now_date()
         if is_closed(propose):
             propose = next_day(propose)
         if manual:
@@ -4160,12 +4337,15 @@ class App(tk.Tk):
     def refresh_business_day_ui(self):
         """★ إضافة (الإصدار 14 — الجزء الأول): تحديث كل عناصر الواجهة التي
         تتبع يوم العمل — سطر الشريط العلوي (والهلال بعد منتصف الليل)، عنوان
-        صفحة العمليات بتاريخه، وتبديل زر الإغلاق بزر البدء وبالعكس"""
+        صفحة العمليات بتاريخه، وتبديل زر الإغلاق بزر البدء وبالعكس
+        ★ تعديل مصرح به (الإصدار 17 — التعديل 4): سطر الشريط العلوي يذكر
+        صراحة أن اليوم التجاري ينتهي 05:00 فجراً ويبدأ الجديد بعده"""
         d = business_day_open()
         if hasattr(self, "lbl_bday"):
             if d:
                 extra = "  🌙 بعد منتصف الليل" if today_str() > d else ""
-                self.lbl_bday.config(text=f"📅 يوم العمل: {d} ({day_name(d)}){extra}",
+                self.lbl_bday.config(text=f"📅 يوم العمل: {d} ({day_name(d)})"
+                                           f" — ينتهي 05:00 فجراً{extra}",
                                      fg="#1d4ed8")
             else:
                 self.lbl_bday.config(
@@ -4201,6 +4381,29 @@ class App(tk.Tk):
         try:
             if hasattr(self, "banner_closed"):
                 self.update_closed_banner()
+        except Exception:
+            pass
+
+    # ★ إضافة (الإصدار 17 — التعديل 4): الملاحظة اللطيفة عند التشغيل قبل 05:00
+    def _show_pre_dawn_note(self, d):
+        """★ إضافة (الإصدار 17 — التعديل 4): ملاحظة لطيفة أعلى الشاشة عند
+        بدء التشغيل قبل 05:00 فجراً — «🌙 نحن قبل 05:00 — العمليات تُسجَّل
+        على يوم [التاريخ]» تختفي وحدها بعد دقيقة (بلا أي زر ولا انتباه)"""
+        try:
+            fr_note = tk.Frame(self.container, bg="#e0f2fe",
+                               highlightbackground="#7dd3fc", highlightthickness=1)
+            fr_note.pack(fill="x", padx=25, pady=(10, 0),
+                         before=self.stats_bar_frame)
+            tk.Label(fr_note,
+                     text=f"🌙 نحن قبل 05:00 — العمليات تُسجَّل على يوم {d} ({day_name(d)})",
+                     bg="#e0f2fe", fg="#075985", font=("Segoe UI", 10, "bold")).pack(pady=5)
+
+            def _hide():
+                try:
+                    fr_note.destroy()
+                except Exception:
+                    pass
+            self.after(60 * 1000, _hide)     # تختفي بعد دقيقة كاملة
         except Exception:
             pass
 
@@ -4766,6 +4969,34 @@ class App(tk.Tk):
         self.lbl_inv_total = tk.Label(p, text="إجمالي السلة: 0.00", bg=BG, fg=ACCENT, font=FV)
         self.lbl_inv_total.pack(fill="x", padx=25)
 
+        # ★★★ إضافة (الإصدار 17 — الإضافة 2): شريط التعديل السريع أسفل السلة —
+        # الكمية والسعر قابلان للتعديل مباشرة: أزرار +/- للكمية وحقلا كمية/سعر
+        # وزر «🔄 تحديث المحدد» يعيد حساب الصف المحدد — والنقر المزدوج على أي
+        # صف يفتح نافذة التعديل الكاملة (Enter في حقلي الإضافة يبقى للجديد كما هو)
+        qbar = tk.Frame(p, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+        qbar.pack(fill="x", padx=25, pady=(4, 2))
+        b_minus = self.mk_btn(qbar, "➖", lambda: self.cart_qty_step(-1), "#475569")
+        b_minus.pack(side="right", padx=(6, 2))
+        add_tip(b_minus, "إنقاص كمية الصف المحدد من السلة بواحد (بحدود تحققات الإضافة كاملة)")
+        b_plus = self.mk_btn(qbar, "➕", lambda: self.cart_qty_step(1), "#475569")
+        b_plus.pack(side="right", padx=2)
+        add_tip(b_plus, "زيادة كمية الصف المحدد من السلة بواحد (المرتجع لا يتجاوز متاح أصله)")
+        tk.Label(qbar, text="الكمية:", bg=CARD, fg=DARK, font=FB).pack(side="right", padx=(14, 2))
+        self.e_cart_qty = tk.Entry(qbar, font=F, justify="center", relief="solid", bd=1, width=10)
+        self.e_cart_qty.pack(side="right", ipady=4)
+        digits_only_filter(self.e_cart_qty)
+        add_tip(self.e_cart_qty, "اكتب كمية جديدة ثم اضغط «🔄 تحديث المحدد» (أو Enter) لتطبيقها على الصف المحدد")
+        tk.Label(qbar, text="السعر:", bg=CARD, fg=DARK, font=FB).pack(side="right", padx=(14, 2))
+        self.e_cart_price = tk.Entry(qbar, font=F, justify="center", relief="solid", bd=1, width=10)
+        self.e_cart_price.pack(side="right", ipady=4)
+        digits_only_filter(self.e_cart_price)
+        add_tip(self.e_cart_price, "اكتب سعراً جديداً ثم اضغط «🔄 تحديث المحدد» — سعر المرتجع مقفل بسعر أصله دائماً")
+        b_upd = self.mk_btn(qbar, "🔄 تحديث المحدد", self.update_selected_cart_row, ACCENT)
+        b_upd.pack(side="left", padx=6)
+        add_tip(b_upd, "تطبيق قيم حقلي الكمية والسعر على الصف المحدد وإعادة حسابه — بلا حذف وإعادة إدخال")
+        tk.Label(qbar, text="نقر مزدوج على أي صف لتعديله بالكامل ✏️", bg=CARD, fg=GRAY,
+                 font=("Segoe UI", 9)).pack(side="left", padx=8)
+
         bar = tk.Frame(p, bg=BG); bar.pack(fill="x", padx=25, pady=(0, 18))
         self.mk_btn(bar, "🗑 إزالة المحدد من السلة", self.remove_from_cart, RED).pack(side="right", padx=6)
         self.mk_btn(bar, "💾 حفظ الفاتورة كاملة", self.save_invoice, ORANGE).pack(side="left", padx=6)
@@ -4774,6 +5005,13 @@ class App(tk.Tk):
         for w in (self.e_inv_qty, self.e_inv_price):
             w.bind("<Return>", lambda e: self.add_to_cart())
         self.cb_inv_item.bind("<Return>", lambda e: self.add_to_cart())
+        # ★ إضافة (الإصدار 17 — الإضافة 2): النقر المزدوج على صف السلة يفتح
+        # نافذة تعديله الكاملة — واختيار صف يعبّئ حقلي الكمية والسعر بقيمه
+        # (السعر يقفل للمرتجع)، وEnter في حقلي التعديل السريع يطبّق على المحدد
+        self.tv_cart.bind("<Double-1>", lambda e: self.edit_cart_row())
+        self.tv_cart.bind("<<TreeviewSelect>>", lambda e: self._cart_sel_fill())
+        for w in (self.e_cart_qty, self.e_cart_price):
+            w.bind("<Return>", lambda e: self.update_selected_cart_row())
 
     def add_to_cart(self):
         """★ إضافة (ميزة 6): التحقق ثم إضافة الصنف الحالي إلى السلة"""
@@ -4843,6 +5081,339 @@ class App(tk.Tk):
         tot = sum(it["total"] for it in self.cart)
         self.lbl_inv_total.config(text=f"إجمالي السلة: {money(tot)}",
                                   fg=(ACCENT if tot >= 0 else RED))
+
+    # ═══════════════════════════════════════════════════════
+    # ★★★ إضافة (الإصدار 17 — الإضافة 2): تعديل صنف داخل السلة ✏️ ★★★
+    # نقر مزدوج على صف السلة يفتح نافذة تعديل كاملة، وشريط التعديل السريع
+    # (أزرار +/- للكمية وحقلا كمية/سعر وزر «تحديث المحدد») يعدّل مباشرة —
+    # بلا حذف وإعادة إدخال، وبنفس تحققات الإضافة كاملة، والمرتجع داخل السلة
+    # يظل مربوطاً بأصله (كمية محدودة بالمتبقي وسعر مقفل) — والسلة بالذاكرة
+    # حتى الحفظ النهائي فلا تُلمس قاعدة البيانات إطلاقاً
+    # ═══════════════════════════════════════════════════════
+    def _cart_orig_available(self, orig_id, exclude_idx):
+        """★ إضافة (الإصدار 17 — الإضافة 2): المتاح للإرجاع من أصل ما بخصم
+        مطالبات السلة عليه (عدا الصف المُعدَّل نفسه) — return_remaining_of
+        يعرف المرتجعات المحفوظة فقط فتُخصم منها مطالبات السلة الحالية"""
+        rem = return_remaining_of(orig_id)
+        for j, o in enumerate(self.cart):
+            if j != exclude_idx and o.get("type") == "مرتجع" and o.get("orig_id") == orig_id:
+                rem -= o["qty"]
+        return rem
+
+    def _cart_sel_fill(self):
+        """★ إضافة (الإصدار 17 — الإضافة 2): اختيار صف من السلة يعبّئ حقلي
+        الكمية والسعر بقيمه — والسعر يقفل للمرتجع (تعديل سعر المرتجع ممنوع:
+        سعره بسعر أصله دائماً)"""
+        try:
+            sel = self.tv_cart.selection()
+            if not sel:
+                self.e_cart_qty.delete(0, "end")
+                if str(self.e_cart_price.cget("state")) == "disabled":
+                    self.e_cart_price.config(state="normal")
+                self.e_cart_price.delete(0, "end")
+                return
+            it = self.cart[int(sel[0])]
+            self.e_cart_qty.delete(0, "end")
+            self.e_cart_qty.insert(0, f'{it["qty"]:g}')
+            if str(self.e_cart_price.cget("state")) == "disabled":
+                self.e_cart_price.config(state="normal")
+            self.e_cart_price.delete(0, "end")
+            self.e_cart_price.insert(0, f'{it["price"]:g}')
+            if it["type"] == "مرتجع":
+                self.e_cart_price.config(state="disabled", disabledforeground=GRAY)
+        except Exception:
+            pass
+
+    def cart_qty_step(self, delta):
+        """★ إضافة (الإصدار 17 — الإضافة 2): أزرار +/- للكمية — زيادة أو
+        إنقاص 1 من الصف المحدد فوراً وإعادة حساب الصف والإجمالي، بحدود نفس
+        تحققات الإضافة (لا صفر، والمرتجع لا يتجاوز متاح أصله)"""
+        sel = self.tv_cart.selection()
+        if not sel:
+            messagebox.showinfo("تنبيه", "اختر صنفاً من السلة أولاً"); return
+        idx = int(sel[0])
+        it = self.cart[idx]
+        new_q = it["qty"] + delta
+        if new_q <= 0:
+            messagebox.showwarning("تنبيه",
+                "الكمية يجب أن تبقى أكبر من صفر — للإزالة استخدم زر "
+                "«🗑 إزالة المحدد من السلة»")
+            return
+        if it["type"] == "مرتجع":
+            avail = self._cart_orig_available(it["orig_id"], idx)
+            if new_q > avail + RET_EPS:
+                messagebox.showwarning("كمية المرتجع أكبر من المتاح",
+                    f"الكمية المتاحة للإرجاع من العملية رقم {it['orig_id']}: {avail:g}\n"
+                    "(كمية الأصل ناقصاً المرتجعات السابقة وباقي السلة)")
+                return
+        old_q = it["qty"]
+        it["qty"] = new_q
+        it["total"] = (-new_q if it["type"] == "مرتجع" else new_q) * it["price"]
+        self.update_cart_view()
+        self.tv_cart.selection_set(str(idx))
+        self._refresh_inv_orig_list()
+        self.lbl_inv_status.config(
+            text=f"✏️ كمية «{it['item']}»: {old_q:g} ← {new_q:g}", fg=GREEN)
+        audit("تعديل صف سلة",
+              f"{it['type']}: {it['item']} — الكمية {old_q:g} ← {new_q:g} "
+              + (f"(زر {'+' if delta > 0 else '-'})"))
+
+    def update_selected_cart_row(self):
+        """★ إضافة (الإصدار 17 — الإضافة 2): زر «🔄 تحديث المحدد» — يطبق قيم
+        حقلي الكمية والسعر على الصف المحدد ويعيد حساب الصف والإجمالي — بنفس
+        تحققات الإضافة كاملة (وسعر المرتجع مقفل بسعر أصله)"""
+        sel = self.tv_cart.selection()
+        if not sel:
+            messagebox.showinfo("تنبيه", "اختر صنفاً من السلة أولاً"); return
+        idx = int(sel[0])
+        it = self.cart[idx]
+        q = to_num(self.e_cart_qty.get())
+        if q is None or q <= 0:
+            messagebox.showwarning("تنبيه",
+                f"الكمية غير صحيحة: «{self.e_cart_qty.get()}»\nأدخل رقماً أكبر من صفر"); return
+        if it["type"] == "مرتجع":
+            avail = self._cart_orig_available(it["orig_id"], idx)
+            if q > avail + RET_EPS:
+                messagebox.showwarning("كمية المرتجع أكبر من المتاح",
+                    f"الكمية المتاحة للإرجاع من العملية رقم {it['orig_id']}: {avail:g}\n"
+                    "(كمية الأصل ناقصاً المرتجعات السابقة وباقي السلة)")
+                return
+            pr = it["price"]          # سعر المرتجع مقفل بسعر أصله دائماً
+        else:
+            pr = to_num(self.e_cart_price.get())
+            if pr is None or pr < 0:
+                messagebox.showwarning("تنبيه",
+                    f"السعر غير صحيح: «{self.e_cart_price.get()}»\nأدخل رقماً صحيحاً"); return
+        old_q, old_pr = it["qty"], it["price"]
+        it["qty"], it["price"] = q, pr
+        it["total"] = (-q if it["type"] == "مرتجع" else q) * pr
+        self.update_cart_view()
+        self.tv_cart.selection_set(str(idx))
+        self._refresh_inv_orig_list()
+        self.lbl_inv_status.config(
+            text=f"✏️ حُدِّث «{it['item']}»: {old_q:g} × {old_pr:g} ← {q:g} × {pr:g}",
+            fg=GREEN)
+        audit("تعديل صف سلة",
+              f"{it['type']}: {it['item']} — {old_q:g} × {old_pr:g} ← {q:g} × {pr:g} (تحديث المحدد)")
+
+    def edit_cart_row(self):
+        """★ إضافة (الإصدار 17 — الإضافة 2): النقر المزدوج على صف السلة —
+        نافذة تعديل صغيرة بحقول الصنف معبأة بقيمه (الاسم/الكمية/السعر/النوع/
+        العميل) وزرا حفظ وإلغاء — الحفظ بنفس تحققات الإضافة كاملة ثم تحديث
+        الصف وإعادة رسم الجدول والإجمالي بلا حذف وإعادة إدخال، والمرتجع يظل
+        مربوطاً بأصله (كمية محدودة بالمتبقي وسعر مقفل بسعر الأصل)"""
+        sel = self.tv_cart.selection()
+        if not sel:
+            messagebox.showinfo("تنبيه", "اختر صنفاً من السلة أولاً"); return
+        idx = int(sel[0])
+        it = self.cart[idx]
+        win = self.register_window(tk.Toplevel(self))
+        win.title("✏️ تعديل صنف السلة")
+        win.configure(bg=BG); win.resizable(False, False)
+        win.transient(self)
+        try:
+            win.grab_set()
+        except Exception:
+            pass
+        card = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+        card.pack(fill="both", expand=True, padx=18, pady=14)
+        # القاعدة الذهبية: زرا الحفظ/الإلغاء يُحزمان side="bottom" أولاً
+        fr_btns = tk.Frame(card, bg=CARD)
+        fr_btns.pack(side="bottom", fill="x", pady=(8, 12))
+        tk.Label(card, text="✏️ تعديل صنف السلة", bg=CARD, fg=DARK, font=FT).pack(pady=(12, 2))
+        tk.Label(card, text=f"الصف {idx + 1} من {len(self.cart)} — التعديل بالذاكرة حتى حفظ الفاتورة",
+                 bg=CARD, fg=GRAY, font=("Segoe UI", 9)).pack(pady=(0, 6))
+
+        def frow(label, width=16):
+            fr = tk.Frame(card, bg=CARD); fr.pack(fill="x", padx=16, pady=4)
+            tk.Label(fr, text=label, bg=CARD, fg=DARK, font=FB, width=width,
+                     anchor="e").pack(side="right")
+            inner = tk.Frame(fr, bg=CARD)
+            inner.pack(side="right", padx=(0, 8))
+            return inner
+
+        i_item = frow("اسم الصنف:")
+        cb_item = ttk.Combobox(i_item, font=F, width=24)
+        cb_item.pack(side="right", ipady=4)
+        cb_item.set(it["item"])
+        try:
+            cb_item["values"] = self.cb_inv_item["values"]   # نفس قائمة الأصناف القائمة
+        except Exception:
+            pass
+
+        i_qty = frow("الكمية:")
+        e_qty = tk.Entry(i_qty, font=F, justify="center", relief="solid", bd=1, width=24)
+        e_qty.pack(side="right", ipady=4)
+        e_qty.insert(0, f'{it["qty"]:g}')
+        digits_only_filter(e_qty)
+
+        i_price = frow("السعر:")
+        e_price = tk.Entry(i_price, font=F, justify="center", relief="solid", bd=1, width=24)
+        e_price.pack(side="right", ipady=4)
+        e_price.insert(0, f'{it["price"]:g}')
+        digits_only_filter(e_price)
+
+        trow = tk.Frame(card, bg=CARD); trow.pack(fill="x", padx=16, pady=(6, 2))
+        tk.Label(trow, text="النوع:", bg=CARD, fg=DARK, font=FB).pack(side="right", padx=(0, 10))
+        type_var = tk.StringVar(value=it["type"])
+        for txt, col in [("نقداً", GREEN), ("شبكة", ACCENT), ("مرتجع", RED)]:
+            tk.Radiobutton(trow, text=txt, variable=type_var, value=txt, font=FB,
+                           fg=col, bg=CARD, selectcolor="#dbeafe", activebackground=CARD,
+                           activeforeground=col, indicatoron=0, width=8, bd=1,
+                           relief="solid", cursor="hand2").pack(side="right", padx=5)
+
+        # صف «العملية المُرجَعة» — يظهر عند اختيار «مرتجع» فقط (نفس نمط الفاتورة)
+        fr_orig = tk.Frame(card, bg=CARD)
+        orow = tk.Frame(fr_orig, bg=CARD); orow.pack(fill="x", pady=3)
+        tk.Label(orow, text="العملية المُرجَعة:", bg=CARD, fg=RED, font=FB,
+                 width=16, anchor="e").pack(side="right")
+        inner_o = tk.Frame(orow, bg=CARD)
+        inner_o.pack(side="right", padx=(0, 8))
+        cb_orig = ttk.Combobox(inner_o, font=F, width=24, state="readonly")
+        cb_orig.pack(side="right", ipady=4)
+        lbl_orig = tk.Label(orow, text="", bg=CARD, fg=GRAY,
+                            font=("Segoe UI", 9, "bold"))
+        lbl_orig.pack(side="right", padx=8)
+        add_tip(cb_orig, "اختر عملية البيع الأصلية — المتاح يخصم المرتجعات السابقة وباقي السلة")
+        orig_map = {}
+
+        i_cust = frow("العميل:")
+        e_cust = tk.Entry(i_cust, font=F, justify="center", relief="solid", bd=1, width=24)
+        e_cust.pack(side="right", ipady=4)
+        e_cust.insert(0, self.e_inv_customer.get())
+        tk.Label(i_cust, text="(لكامل الفاتورة)", bg=CARD, fg=GRAY,
+                 font=("Segoe UI", 9)).pack(side="right", padx=(4, 0))
+
+        lbl_err = tk.Label(card, text="", bg=CARD, fg=RED,
+                           font=("Segoe UI", 9, "bold"), wraplength=330, justify="center")
+        lbl_err.pack(pady=(2, 0))
+
+        def _unlock_price():
+            if str(e_price.cget("state")) == "disabled":
+                e_price.config(state="normal")
+                e_price.delete(0, "end")
+
+        def refresh_orig_list():
+            try:
+                cb_orig.set("")
+                orig_map.clear()
+                lbl_orig.config(text="", fg=GRAY)
+                _unlock_price()
+                item = cb_item.get().strip()
+                if not item:
+                    cb_orig["values"] = []
+                    lbl_orig.config(text="اكتب اسم الصنف لعرض عمليات بيعه", fg=ORANGE)
+                    return
+                labels = []
+                for o in return_eligible_originals(item):
+                    avail = self._cart_orig_available(o["id"], idx)
+                    if avail <= RET_EPS:
+                        continue          # استُهلك متاحه داخل هذه الفاتورة
+                    o = dict(o)
+                    o["qty"] = avail
+                    lbl = (f'[{o["id"]}] — [{o["date"]}] — كمية [{avail:g}] — '
+                           f'بـ [{o["price"]:g}] — [{o["type"]}]')
+                    labels.append(lbl)
+                    orig_map[lbl] = o
+                cb_orig["values"] = labels
+                if not labels:
+                    lbl_orig.config(text="لا عمليات بيع صالحة للمرتجع لهذا الصنف", fg=RED)
+            except Exception:
+                pass
+
+        def orig_selected():
+            try:
+                s = orig_map.get(cb_orig.get())
+                if not s:
+                    return
+                _unlock_price()
+                e_price.insert(0, f'{s["price"]:g}')
+                e_price.config(state="disabled", disabledforeground=DARK)
+                lbl_orig.config(text=f'المتاح للإرجاع: {s["qty"]:g}', fg="#0d9488")
+            except Exception:
+                pass
+
+        def sync_return_ui():
+            try:
+                if type_var.get() == "مرتجع":
+                    fr_orig.pack(fill="x", padx=16, pady=2, after=trow)
+                    refresh_orig_list()
+                else:
+                    fr_orig.pack_forget()
+                    cb_orig.set("")
+                    orig_map.clear()
+                    lbl_orig.config(text="", fg=GRAY)
+                    _unlock_price()
+            except Exception:
+                pass
+
+        def _item_changed():
+            if type_var.get() == "مرتجع":
+                refresh_orig_list()
+
+        cb_orig.bind("<<ComboboxSelected>>", lambda e: orig_selected())
+        type_var.trace_add("write", lambda *_: sync_return_ui())
+        cb_item.bind("<KeyRelease>", lambda e: _item_changed())
+        cb_item.bind("<<ComboboxSelected>>", lambda e: _item_changed())
+        sync_return_ui()
+        # تعبئة أصل المرتجع الحالي إن كان الصف المُعدَّل مرتجعاً مربوطاً
+        if it["type"] == "مرتجع" and it.get("orig_id"):
+            for lbl, o in orig_map.items():
+                if o["id"] == it["orig_id"]:
+                    cb_orig.set(lbl)
+                    orig_selected()
+                    break
+
+        def do_save():
+            item = cb_item.get().strip()
+            if not item:
+                lbl_err.config(text="اكتب اسم الصنف أولاً")
+                shake_widget(card); return
+            q = to_num(e_qty.get())
+            if q is None or q <= 0:
+                lbl_err.config(text=f"الكمية غير صحيحة: «{e_qty.get()}» — أدخل رقماً أكبر من صفر")
+                shake_widget(card); return
+            t = type_var.get()
+            orig_id = None
+            if t == "مرتجع":
+                s = orig_map.get(cb_orig.get())
+                if s is None:
+                    lbl_err.config(text="اختر «العملية المُرجَعة» أولاً — ممنوع مرتجع بلا أصل")
+                    shake_widget(card); return
+                if q > s["qty"] + RET_EPS:
+                    lbl_err.config(text=f"المتاح للإرجاع من العملية رقم {s['id']}: {s['qty']:g}")
+                    shake_widget(card); return
+                pr = s["price"]          # سعر المرتجع دائماً بسعر أصله
+                orig_id = s["id"]
+            else:
+                pr = to_num(e_price.get())
+                if pr is None or pr < 0:
+                    lbl_err.config(text=f"السعر غير صحيح: «{e_price.get()}» — أدخل رقماً صحيحاً")
+                    shake_widget(card); return
+            total = (-q * pr) if t == "مرتجع" else (q * pr)
+            old = dict(it)
+            it["item"], it["qty"], it["price"], it["total"] = item, q, pr, total
+            it["type"], it["orig_id"] = t, orig_id
+            # حقل العميل يخص الفاتورة كلها — يُحدَّث حقل الفاتورة نفسه
+            new_cust = e_cust.get().strip()
+            self.e_inv_customer.delete(0, "end")
+            if new_cust:
+                self.e_inv_customer.insert(0, new_cust)
+            self.update_cart_view()
+            self.tv_cart.selection_set(str(idx))
+            self._refresh_inv_orig_list()
+            audit("تعديل صف سلة",
+                  f"{old['type']}: {old['item']} — {old['qty']:g} × {old['price']:g} = {old['total']:g}"
+                  f"  ←  {t}: {item} — {q:g} × {pr:g} = {total:g}"
+                  + (f" | مربوط بالعملية رقم {orig_id}" if orig_id else ""))
+            self.lbl_inv_status.config(text=f"✏️ تم تعديل «{item}» داخل السلة", fg=GREEN)
+            win.destroy()
+
+        self.mk_btn(fr_btns, "💾 حفظ", do_save, GREEN).pack(side="right", padx=6)
+        self.mk_btn(fr_btns, "إلغاء", win.destroy, "#475569").pack(side="right", padx=6)
+        e_qty.bind("<Return>", lambda _e: do_save())
+        e_price.bind("<Return>", lambda _e: do_save())
+        place_window(win, 470)
 
     # ★★★ إضافات (الإصدار 16 — القسم 1-1): دوال ربط المرتجع بالأصل في الفاتورة ↩ ★★★
     def _sync_inv_return_ui(self):
@@ -5882,7 +6453,9 @@ class App(tk.Tk):
         result = {"name": None, "role": None}
         win = tk.Toplevel(self)
         _screen_login_build(win, result)
-        win.protocol("WM_DELETE_WINDOW", win.destroy)
+        # ★ تعديل مصرح به (الإصدار 17 — الإضافة 3): بروتوكول الإغلاق (Alt+F4)
+        # يديره _screen_login_build نفسها — تحذير «أكمل تسجيل الدخول» بدل
+        # الإغلاق، والخروج الوحيد زر ✕ (كإلغاء الدخول القائم) أو دخول ناجح
         win.wait_window(win)          # حلقة أحداث محلية آمنة — تعود فور إغلاق النافذة
         return result if result["role"] else None
 
@@ -7214,6 +7787,240 @@ class App(tk.Tk):
             log_error(e, sys.exc_info()[2])
 
     # ═══════════════════════════════════════════════════════
+    # ★★★ إضافة (الإصدار 17 — الإضافة 1): تقرير البائعين الشامل للطباعة 🖨️ ★★★
+    # متاح للجميع (البائع والمدير): معاينة أولاً (قاعدة المعاينة قبل الطباعة
+    # القائمة) ثم طباعة حرارية 80mm أو A4 عبر PDF أو تصدير Excel — للعرض
+    # والطباعة فقط بلا أي تعديل، وكل طباعة/تصدير في سجل التدقيق
+    # ═══════════════════════════════════════════════════════
+    def _sellers_report_rows(self, d_from, d_to):
+        """★ إضافة (الإصدار 17 — الإضافة 1): جمع أداء كل البائعين ضمن الفترة
+        من جدول العمليات (استعلام جديد فقط) — يرجع (صفوف البائعين، صف إجمالي
+        المحل) بنفس أعمدة تقرير أداء البائعين القائم: عدد العمليات ونقداً
+        وشبكة والمرتجعات والصافي"""
+        cond, params = [], []
+        if d_from:
+            cond.append("date >= ?"); params.append(d_from)
+        if d_to:
+            cond.append("date <= ?"); params.append(d_to)
+        where = (" WHERE " + " AND ".join(cond)) if cond else ""
+        sql = ("SELECT seller_name, type, COUNT(*), SUM(total) FROM operations"
+               + where + " GROUP BY seller_name, type")
+        agg = {}
+        with connect() as conn:
+            for seller, typ, cnt, sm in conn.execute(sql, params):
+                a = agg.setdefault(seller or "غير محدد",
+                                   {"n": 0, "cash": 0.0, "netw": 0.0, "rv": 0.0})
+                a["n"] += cnt
+                if typ == "مرتجع":
+                    a["rv"] += -(sm or 0)
+                elif typ == "شبكة":
+                    a["netw"] += (sm or 0)
+                else:              # نقداً (وقيم المبيع القديمة بعد الترقية)
+                    a["cash"] += (sm or 0)
+        rows = []
+        for seller, a in sorted(agg.items(),
+                                key=lambda kv: (kv[1]["cash"] + kv[1]["netw"] - kv[1]["rv"]),
+                                reverse=True):
+            rows.append({"seller": seller, "n": a["n"], "cash": a["cash"],
+                         "netw": a["netw"], "rets": a["rv"],
+                         "net": a["cash"] + a["netw"] - a["rv"]})
+        tot = {"seller": "إجمالي المحل", "n": sum(r["n"] for r in rows),
+               "cash": sum(r["cash"] for r in rows), "netw": sum(r["netw"] for r in rows),
+               "rets": sum(r["rets"] for r in rows), "net": sum(r["net"] for r in rows)}
+        return rows, tot
+
+    def open_sellers_report(self):
+        """★ إضافة (الإصدار 17 — الإضافة 1): زر «🖨️ تقرير البائعين» — نافذة
+        معاينة قبل الطباعة متاحة للجميع: جدول أداء كل البائعين للفترة
+        (افتراضياً يوم العمل التجاري الحالي مع حقلي من/إلى تاريخ بنفس دالة
+        التاريخ المرنة لفترة أوسع) + صف إجمالي المحل بخلفية مميزة، وأسفل
+        التقرير التاريخ والوقت واسم من يطبع — وثلاثة مسارات من نفس المعاينة:
+        طباعة حرارية 80mm / طباعة A4 عبر PDF / تصدير Excel (نفس export_xlsx)
+        — التقرير للعرض والطباعة فقط ولا يتيح أي تعديل"""
+        win = self.register_window(tk.Toplevel(self))
+        win.title("👁️ معاينة قبل الطباعة — تقرير البائعين")
+        win.configure(bg=BG)
+        # القاعدة الذهبية: شريط الأزرار السفلي يُحزم أولاً side="bottom"
+        # قبل أي شيء آخر فلا يُقص أبداً — والأزرار تُنشأ فيه بعد تعريف دوالها
+        bar = tk.Frame(win, bg=BG)
+        bar.pack(side="bottom", fill="x", padx=22, pady=(4, 16))
+        # صف الفترة أعلى النافذة: حقلا من/إلى (نفس دالة التاريخ المرنة القائمة)
+        frow = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+        frow.pack(fill="x", padx=22, pady=(16, 4))
+
+        def date_cell(label):
+            c = tk.Frame(frow, bg=CARD); c.pack(side="right", padx=10, pady=10)
+            tk.Label(c, text=label, bg=CARD, fg=DARK, font=FB).pack(side="right")
+            e = tk.Entry(c, font=F, justify="center", relief="solid", bd=1, width=13)
+            e.pack(side="right", padx=(6, 0), ipady=4)
+            return e
+
+        e_from = date_cell("من تاريخ:")
+        e_to   = date_cell("إلى تاريخ:")
+        # افتراضياً يوم العمل التجاري الحالي — قابل للتوسيع لفترة أوسع
+        bd = current_business_day()
+        e_from.insert(0, bd)
+        e_to.insert(0, bd)
+        tk.Label(frow, text="الصيغ المقبولة: 2026-01-10 أو 10-01-2026 أو 10/01/2026 (بالأرقام العربية أيضاً)",
+                 bg=CARD, fg=GRAY, font=("Segoe UI", 9)).pack(side="right", padx=10)
+        b_view = self.mk_btn(frow, "🔄 عرض", lambda: fill(), ACCENT)
+        b_view.pack(side="left", padx=10)
+        add_tip(b_view, "إعادة عرض التقرير بالفترة المُدخلة — افتراضياً يوم العمل التجاري الحالي")
+        # ترويسة المعاينة — كما ستُطبع تماماً: اسم المحل والعنوان والفترة
+        head = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+        head.pack(fill="x", padx=22, pady=(4, 6))
+        store = get_setting("store_name") or "نظام المبيعات والمُرتجعات"
+        tk.Label(head, text=store, bg=CARD, fg=DARK, font=FT).pack(pady=(12, 2))
+        tk.Label(head, text="تقرير البائعين — أداء جميع البائعين", bg=CARD, fg=ACCENT,
+                 font=("Segoe UI", 13, "bold")).pack(pady=2)
+        lbl_sub = tk.Label(head, text="", bg=CARD, fg=GRAY,
+                           font=("Segoe UI", 10))
+        lbl_sub.pack(pady=(0, 12))
+        # جدول المعاينة — نفس أعمدة تقرير أداء البائعين القائم (للعرض فقط)
+        frm, tv = self.mk_tree(win,
+            ["الصافي", "المرتجعات", "شبكة", "نقداً", "عدد العمليات", "البائع"],
+            [120, 120, 115, 115, 100, 170])
+        frm.pack(fill="both", expand=True, padx=22, pady=4)
+        tv.tag_configure("total", background="#dbeafe")
+        add_tip(tv, "التقرير للعرض والطباعة فقط — لا يتيح أي تعديل")
+        # أسفل التقرير: التاريخ والوقت + اسم من يطبع
+        lbl_foot = tk.Label(win, text="", bg=BG, fg=GRAY,
+                            font=("Segoe UI", 10, "bold"))
+        lbl_foot.pack(side="bottom", fill="x", padx=22, pady=(2, 0))
+        state = {"rows": [], "tot": None, "f": bd, "t": bd}
+
+        def fill():
+            f, t = parse_date_multi(e_from.get()), parse_date_multi(e_to.get())
+            bad = [lbl for lbl, v in (("من تاريخ", f), ("إلى تاريخ", t)) if v is None]
+            if bad:
+                messagebox.showwarning("تاريخ خاطئ",
+                    "صيغة غير صحيحة لـ " + " و ".join(bad) +
+                    "\nالصيغ المقبولة: 2026-01-10 أو 10-01-2026 أو 10/01/2026",
+                    parent=win)
+                return
+            rows, tot = self._sellers_report_rows(f, t)
+            state["rows"], state["tot"], state["f"], state["t"] = rows, tot, f, t
+            tv.delete(*tv.get_children())
+            for i, r in enumerate(rows):
+                tv.insert("", "end", tags=stripe_tags(i),
+                          values=(money(r["net"]), money(r["rets"]), money(r["netw"]),
+                                  money(r["cash"]), r["n"], r["seller"]))
+            if rows:
+                # صف الإجمالي النهائي بخلفية مميزة: إجمالي المحل ومجموع كل البائعين
+                tv.insert("", "end", tags=("total",),
+                          values=(money(tot["net"]), money(tot["rets"]), money(tot["netw"]),
+                                  money(tot["cash"]), tot["n"],
+                                  "إجمالي المحل — مجموع كل البائعين"))
+                lbl_sub.config(text=f"الفترة: من {f or 'البداية'} إلى {t or 'اليوم'} — "
+                                     f"{len(rows)} بائعاً عمل خلالها")
+                lbl_foot.config(text=f"التاريخ والوقت: "
+                                     + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                     + f" — طبعه بواسطة: {CURRENT_USER['name']}")
+            else:
+                lbl_sub.config(text=f"الفترة: من {f or 'البداية'} إلى {t or 'اليوم'}")
+                lbl_foot.config(text="")
+                messagebox.showinfo("تنبيه", "لا توجد عمليات لأي بائع ضمن هذه الفترة",
+                                    parent=win)
+        fill()
+
+        def do_thermal():
+            """🖨 حرارية 80mm: ترويسة وسطر لكل بائع وفاصل وإجمالي نهائي بخط أكبر"""
+            if not state["rows"]:
+                messagebox.showinfo("تنبيه", "لا توجد بيانات لطباعتها ضمن هذه الفترة",
+                                    parent=win)
+                return
+            if print_report_lines(get_setting("printer_name") or "",
+                                  build_sellers_report_lines(get_setting("store_name") or "",
+                                                             state["f"], state["t"],
+                                                             state["rows"], state["tot"],
+                                                             CURRENT_USER["name"]),
+                                  job_title="تقرير البائعين"):
+                audit("طباعة تقرير البائعين",
+                      f"بواسطة {CURRENT_USER['name']} — للفترة من "
+                      f"{state['f'] or 'البداية'} إلى {state['t'] or 'اليوم'} (حرارية 80mm)")
+
+        def do_a4():
+            """🖨 A4 عبر PDF: ملف قياسي ثم حوار الطباعة في ويندوز (كما هو قائم)"""
+            if not state["rows"]:
+                messagebox.showinfo("تنبيه", "لا توجد بيانات لطباعتها ضمن هذه الفترة",
+                                    parent=win)
+                return
+            if not PDF_LIBS_OK:
+                messagebox.showerror("طباعة A4 غير متاحة", PDF_LIBS_MSG, parent=win)
+                return
+            try:
+                folder = os.path.join(data_dir(), "pdf_reports")
+                os.makedirs(folder, exist_ok=True)
+                stamp = datetime.now().strftime("%H%M")
+                path = os.path.join(folder,
+                                    f"تقرير_البائعين_{state['f'] or 'الكل'}_{stamp}.pdf")
+                build_sellers_report_pdf(path, get_setting("store_name") or "",
+                                         state["f"], state["t"], state["rows"],
+                                         state["tot"], CURRENT_USER["name"])
+                ok, err = send_pdf_to_printer(path)
+                audit("طباعة تقرير البائعين",
+                      f"بواسطة {CURRENT_USER['name']} — للفترة من "
+                      f"{state['f'] or 'البداية'} إلى {state['t'] or 'اليوم'} (A4 عبر PDF)")
+                if ok:
+                    messagebox.showinfo("تم الإرسال للطباعة",
+                        "أُرسل تقرير البائعين إلى حوار الطباعة ✅\n"
+                        "اختر طابعة A4 من نافذة الطباعة التي ظهرت في ويندوز.\n\n"
+                        "ملف PDF محفوظ في:\n" + path, parent=win)
+                else:
+                    messagebox.showwarning("افتح الملف واطبعه",
+                        "تعذر فتح حوار الطباعة تلقائياً — فُتح ملف PDF بدلاً منه.\n"
+                        "اطبع منه مباشرة (Ctrl+P) واختر طابعة A4.\n\n" + err +
+                        "\n\nالملف:\n" + path, parent=win)
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+                messagebox.showerror("خطأ في طباعة A4",
+                                     "حدث خطأ أثناء توليد ملف PDF:\n\n" + str(e),
+                                     parent=win)
+
+        def do_xlsx():
+            """📥 تصدير Excel بنفس export_xlsx القائمة + صف إجمالي المحل"""
+            if not state["rows"]:
+                messagebox.showinfo("تنبيه", "لا توجد بيانات لتصديرها ضمن هذه الفترة",
+                                    parent=win)
+                return
+            path = filedialog.asksaveasfilename(title="حفظ تقرير البائعين",
+                                                defaultextension=".xlsx",
+                                                initialfile=f"تقرير_البائعين_{today_str()}.xlsx",
+                                                filetypes=[("ملف Excel", "*.xlsx")],
+                                                parent=win)
+            if not path:
+                return
+            headers = ["البائع", "عدد العمليات", "نقداً", "شبكة", "المرتجعات", "الصافي"]
+            widths  = [22, 12, 14, 14, 14, 14]
+            rows = [[r["seller"], r["n"], r["cash"], r["netw"], r["rets"], r["net"]]
+                    for r in state["rows"]]
+            tot = state["tot"]
+            rows.append([tot["seller"], tot["n"], tot["cash"], tot["netw"],
+                         tot["rets"], tot["net"]])
+            export_xlsx(path, headers, rows, widths,
+                        desc=f"تقرير البائعين — {len(state['rows'])} بائعاً — الفترة من "
+                             f"{state['f'] or 'البداية'} إلى {state['t'] or 'اليوم'}")
+            audit("تصدير تقرير البائعين",
+                  f"بواسطة {CURRENT_USER['name']} — للفترة من "
+                  f"{state['f'] or 'البداية'} إلى {state['t'] or 'اليوم'} (Excel)")
+            messagebox.showinfo("تم", "تم تصدير تقرير البائعين إلى Excel ✅",
+                                parent=win)
+
+        b_th = self.mk_btn(bar, "🖨 طباعة حرارية 80mm", do_thermal, "#334155")
+        b_th.pack(side="right", padx=6)
+        add_tip(b_th, "طباعة تقرير البائعين على الطابعة الحرارية المختارة في إعدادات الطباعة (نظام ESC/POS الموجود)")
+        b_a4 = self.mk_btn(bar, "🖨 طباعة A4 (PDF)", do_a4, "#1d4ed8")
+        b_a4.pack(side="right", padx=6)
+        add_tip(b_a4, "يُنشأ ملف PDF قياسي ويُفتح حوار الطباعة في ويندوز — اختر طابعة A4 منه")
+        b_xl = self.mk_btn(bar, "📥 تصدير Excel", do_xlsx, "#0d9488")
+        b_xl.pack(side="right", padx=6)
+        add_tip(b_xl, "تصدير جدول البائعين المعروض إلى ملف Excel حقيقي (نفس نظام التصدير القائم)")
+        b_close = self.mk_btn(bar, "❌ إغلاق", win.destroy, "#475569")
+        b_close.pack(side="right", padx=6)
+        add_tip(b_close, "إغلاق نافذة المعاينة دون طباعة")
+        place_window(win, 900, 640, 760, 540, can_resize=True)
+
+    # ═══════════════════════════════════════════════════════
     # ★★★ إضافة (إصدار 10 — نظام التحديث التلقائي الصامت) ★★★
     # شريط الإشعار الأصفر + نافذة التحديث للمدير — لا شيء تقني يظهر
     # للمستخدمين: البائع يرى الشريط و«راجع المدير» فقط
@@ -8398,22 +9205,48 @@ def _screen_login_build(win, result):
     بالشكل والميزات الثماني الجديدة فقط. ترجع البطاقة الوسطية."""
     win.configure(bg=DARK)
     sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-    win.geometry(f"{LOGIN_W}x{LOGIN_H}+{(sw - LOGIN_W) // 2}+{max((sh - LOGIN_H) // 2 - 40, 0)}")
-    win.resizable(False, False)
+    # ★ تعديل مصرح به (الإصدار 17 — الإضافة 3): شاشة الدخول بملء الشاشة —
+    # state("zoomed") على ويندوز مع geometry مساوي لأبعاد الشاشة كخطة بديلة،
+    # وأي فشل يُتجاهل بهدوء try/except فتظهر النافذة بحجمها العادي كما كانت
     try:
-        win.overrideredirect(True)     # بلا إطار ويندوز — السحب من الخلفية أدناه
+        win.overrideredirect(True)     # بلا إطار ويندوز — زر ✕ وحده أعلى اليسار
     except Exception:
         pass
+    fs_ok = False
+    try:
+        win.resizable(True, True)      # يقبل التكبير أولاً — zoomed يرفض غير القابلة للتحجيم
+        win.state("zoomed")            # ويندوز: ملء الشاشة عبر حالة النافذة
+        fs_ok = True
+    except Exception:
+        fs_ok = False
+    if not fs_ok:
+        try:
+            win.geometry(f"{sw}x{sh}+0+0")   # الخطة البديلة: أبعاد الشاشة كاملة صراحة
+            fs_ok = True
+        except Exception:
+            fs_ok = False
+    if fs_ok:
+        try:
+            win.resizable(False, False)      # العودة لمنع التحجيم كما هو قائم
+        except Exception:
+            pass
+    else:
+        # الفشل الهادئ: الحجم العادي المركزي كما كان قائماً تماماً
+        win.geometry(f"{LOGIN_W}x{LOGIN_H}+{(sw - LOGIN_W) // 2}+{max((sh - LOGIN_H) // 2 - 40, 0)}")
+        win.resizable(False, False)
+    W, H = (sw, sh) if fs_ok else (LOGIN_W, LOGIN_H)   # مقاس التخطيط الفعلي
 
     # ---------- الخلفية: صورة المحل بطبقة داكنة، أو التدرج الكحلي الافتراضي ----------
-    cv = tk.Canvas(win, width=LOGIN_W, height=LOGIN_H, bg=DARK, highlightthickness=0)
+    # ★ (الإصدار 17 — الإضافة 3): الخلفية تمتد على كامل الشاشة — صورة المحل
+    # بمقاس الشاشة كاملة أو التدرج الكحلي على كاملها
+    cv = tk.Canvas(win, width=W, height=H, bg=DARK, highlightthickness=0)
     cv.pack(fill="both", expand=True)
-    photo = load_login_bg_photo(LOGIN_W, LOGIN_H)
+    photo = load_login_bg_photo(W, H)
     if photo is not None:
         cv._login_bg_photo = photo      # الاحتفاظ بمرجع حي للصورة (يمنع محوها)
         cv.create_image(0, 0, image=photo, anchor="nw")
     else:
-        draw_login_gradient(cv, LOGIN_W, LOGIN_H)
+        draw_login_gradient(cv, W, H)
 
     # ---------- سحب النافذة من أي مكان على الخلفية + زر ✕ أعلى اليسار ----------
     drag = {"x": 0, "y": 0}
@@ -8424,16 +9257,86 @@ def _screen_login_build(win, result):
             win.geometry(f"+{e.x_root - drag['x']}+{e.y_root - drag['y']}")
         except Exception:
             pass
-    cv.bind("<Button-1>", _press)
-    cv.bind("<B1-Motion>", _move)
+    # ★ تعديل مصرح به (الإصدار 17 — الإضافة 3): السحب متاح في الحجم العادي
+    # فقط — ملء الشاشة بوابة مقفلة والسحب يكسرها (يكشف ما خلفها) فلا يُربط
+    if not fs_ok:
+        cv.bind("<Button-1>", _press)
+        cv.bind("<B1-Motion>", _move)
     # ✕ يغلق نافذة الدخول — فيعاملها البرنامج كإلغاء الدخول تماماً كما هو قائم
     tk.Button(win, text="✕", command=win.destroy, bg=SIDEBAR, fg=BORDER,
               activebackground=RED, activeforeground="white", font=("Segoe UI", 9, "bold"),
               bd=0, relief="flat", cursor="hand2", takefocus=0).place(x=8, y=8, width=30, height=26)
-    # ★ إضافة (إصدار 10 — اللمسة): سطر الإصدار أسفل شاشة الدخول — صغير
-    # بلون النص الثانوي، فوق الخلفيتين معاً (التدرج أو صورة المحل الداكنة)
-    cv.create_text(LOGIN_W // 2, LOGIN_H - 16, text=f"الإصدار {VERSION}",
-                   fill="#94a3b8", font=("Segoe UI", 9))
+
+    # ★★★ إضافة (الإصدار 17 — الإضافة 3): توزيع الشاشة الكاملة ★★★
+    # أعلى الشاشة: شعار المحل واسم النظام بحجم أكبر (نستثمر المساحة)
+    store_top = get_setting("store_name") or ""
+    cv.create_text(W // 2, 58, text="🖥️", fill="#e2e8f0", font=("Segoe UI", 30))
+    if store_top:
+        cv.create_text(W // 2, 104, text=store_top, fill="#f1f5f9",
+                       font=("Segoe UI", 20, "bold"))
+        cv.create_text(W // 2, 132, text="نظام المبيعات والمُرتجعات", fill="#94a3b8",
+                       font=("Segoe UI", 11))
+    else:
+        cv.create_text(W // 2, 104, text="نظام المبيعات والمُرتجعات", fill="#f1f5f9",
+                       font=("Segoe UI", 20, "bold"))
+    # أسفل يمين: ساعة وتاريخ حي بخط كبير واضح بنظام 24 ساعة — مفيدة للتحقق
+    # من تاريخ الجهاز صباحاً
+    clock_id = cv.create_text(W - 26, H - 66, anchor="se", text="",
+                              fill="#f1f5f9", font=("Segoe UI", 22, "bold"))
+    date_id = cv.create_text(W - 26, H - 38, anchor="se", text="",
+                             fill="#94a3b8", font=("Segoe UI", 11, "bold"))
+    _clock_after = {"id": None}          # إلغاء مؤقت الساعة عند إغلاق النافذة
+
+    def _login_clock_tick():
+        try:
+            if not win.winfo_exists():
+                return
+            now = datetime.now()
+            d = now.strftime("%Y-%m-%d")
+            cv.itemconfigure(clock_id, text=now.strftime("%H:%M:%S"))
+            cv.itemconfigure(date_id, text=f"{day_name(d)} — {d}")
+            _clock_after["id"] = win.after(1000, _login_clock_tick)
+        except Exception:
+            pass
+    _login_clock_tick()
+
+    def _cancel_login_clock(_e=None):
+        try:
+            if _clock_after["id"] is not None:
+                win.after_cancel(_clock_after["id"])
+        except Exception:
+            pass
+    win.bind("<Destroy>", _cancel_login_clock, add="+")
+    # أسفل يسار: الإصدار + حالة قاعدة البيانات (نقطة خضراء متصلة / حمراء مشكلة)
+    db_ok = True
+    try:
+        with connect() as conn:
+            conn.execute("SELECT 1").fetchone()
+    except Exception:
+        db_ok = False
+    cv.create_text(26, H - 66, anchor="sw", text=f"الإصدار {VERSION}",
+                   fill="#94a3b8", font=("Segoe UI", 10, "bold"))
+    cv.create_text(26, H - 38, anchor="sw",
+                   text=("🟢 قاعدة البيانات: متصلة وسليمة" if db_ok
+                         else "🔴 قاعدة البيانات: مشكلة — راجع error_log.txt"),
+                   fill=("#4ade80" if db_ok else "#f87171"),
+                   font=("Segoe UI", 10, "bold"))
+
+    # ★★★ إضافة (الإصدار 17 — الإضافة 3): حماية الشاشة ★★★
+    # لا إغلاق بـ Alt+F4 ولا خروج بـ Esc — تحويلهما لتحذير «أكمل تسجيل الدخول»
+    # والخروج الوحيد: دخول ناجح أو زر ✕ (كالسلوك الحالي عند الإلغاء) —
+    # وtopmost أثناء الدخول فقط (ينتهي بتدمير النافذة بعد الدخول)
+    def _must_login():
+        messagebox.showwarning("أكمل تسجيل الدخول",
+            "هذه الشاشة مقفلة حتى تسجيل الدخول.\n"
+            "الخروج الوحيد: زر ✕ أعلى اليسار (يغلق البرنامج كاملاً كما هو قائم).",
+            parent=win)
+    win.protocol("WM_DELETE_WINDOW", _must_login)
+    win.bind("<Escape>", lambda _e: _must_login())
+    try:
+        win.attributes("-topmost", True)
+    except Exception:
+        pass
 
     # ---------- البطاقة الوسطية: CARD بإطار BORDER أسمك قليلاً (زوايا ظاهرة) ----------
     # توضع بـ place في المنتصف لتدعم الانزلاق عند الظهور والاهتزاز عند الخطأ
@@ -8720,7 +9623,9 @@ def login_flow():
     win = tk.Tk()
     result = {"name": None, "role": None}
     _screen_login_build(win, result)
-    win.protocol("WM_DELETE_WINDOW", win.destroy)
+    # ★ تعديل مصرح به (الإصدار 17 — الإضافة 3): بروتوكول الإغلاق (Alt+F4)
+    # يديره _screen_login_build نفسها — تحذير «أكمل تسجيل الدخول» بدل
+    # الإغلاق، والخروج الوحيد زر ✕ (كإلغاء الدخول القائم) أو دخول ناجح
     win.mainloop()
     return result if result["role"] else None
 
