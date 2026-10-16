@@ -278,7 +278,7 @@ except Exception:
 import urllib.request   # ★ إضافة (إصدار 10): جلب التحديث — المكتبة القياسية وحدها
 import threading        # ★ إضافة (إصدار 10): فحص خلفي لا يجمّد الواجهة أبداً
 
-VERSION = "2.7"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
+VERSION = "2.8"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
 UPDATE_VERSION_URL = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/version.txt"
 UPDATE_FILE_URL    = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/main.py"
 # ★ إضافة (الإصدار 15 — الجزء الثاني): ملاحظات الإصدارات (changelog) —
@@ -828,12 +828,16 @@ def ensure_users_upgraded():
 # ═══════════════════════════════════════════════════════════
 # ★★★ إضافات الإصدار 8 — نظام الصلاحيات الدقيق (الميزة 5) ★★★
 # ═══════════════════════════════════════════════════════════
-# عشر صلاحيات يمنحها المدير لكل مستخدم — والمدير يملك كل الصلاحيات دائماً
-# (تظهر له مقفلة في شاشة التعديل، ولا يطلب منه الفحص أبداً)
+# ★ تعديل مصرح به (الإصدار 18 — المشكلة 2): إحدى عشرة صلاحية — أُضيفت
+# صلاحية «✏️ تصحيح عملية» لعمليات يوم العمل (افتراضياً مدير وأدمن فقط،
+# والمدير يمنحها لبائع موثوق من شاشة «✏️ تعديل الصلاحيات» القائمة)
 PERMISSIONS = [
     ("add_ops",        "إضافة عمليات وفواتير"),
     ("close_day",      "إغلاق اليوم"),
     ("delete_op",      "حذف عملية"),
+    # ★ إضافة (الإصدار 18 — المشكلة 2): تصحيح عمليات يوم العمل — الأصل
+    # يُنسخ لسلة المحذوفات بوسم «تصحيح» وكل تغيير يُوثق قبل ← بعد بالتدقيق
+    ("edit_op",        "✏️ تصحيح عملية"),
     ("reopen_day",     "إعادة فتح يوم مغلق"),
     ("view_audit",     "عرض سجل التدقيق"),
     ("dashboard",      "لوحة المعلومات"),
@@ -2933,7 +2937,28 @@ class App(tk.Tk):
         # من 700 إلى 760 فقط — الشريط الجانبي كان ممتلئاً بالكامل (آخر زر
         # قائم ينتهي عند 637 من 700) وزر «التحديث» الجديد للمدير يحتاج
         # مساحته دون قصّ أي زر قائم؛ الحد الأدنى للتصغير بقي كما هو (950×620)
-        self.geometry("1100x760"); self.minsize(950, 620)
+        # ★★★ إضافة (الإصدار 18 — المشكلة 3): النافذة الرئيسية تفتح بملء الشاشة
+        # بعد الدخول — بنفس أسلوب شاشة الدخول القائم تماماً: state("zoomed")
+        # على ويندوز مع geometry بأبعاد الشاشة كخطة بديلة، والفشل الهادئ
+        # try/except يبقي الحجم المعتاد؛ وminsize معقول حتى لا تتكسر العناصر
+        # عند التصغير (الصفحات كلها مبنية بـ fill/expand فتتكيف تلقائياً
+        # مع المساحة الأكبر، والنوافذ المنبثقة تبقى بأحجامها المنطقية)
+        self.minsize(1000, 600)
+        _fs18_ok = False
+        try:
+            self.state("zoomed")            # ويندوز: ملء الشاشة عبر حالة النافذة
+            _fs18_ok = True
+        except Exception:
+            _fs18_ok = False
+        if not _fs18_ok:
+            try:
+                _sw18, _sh18 = self.winfo_screenwidth(), self.winfo_screenheight()
+                self.geometry(f"{_sw18}x{_sh18}+0+0")   # الخطة البديلة: أبعاد الشاشة كاملة
+                _fs18_ok = True
+            except Exception:
+                _fs18_ok = False
+        if not _fs18_ok:
+            self.geometry("1100x760")       # الفشل الهادئ: الحجم المعتاد كما كان
         self.configure(bg=BG)
         init_db()
         # ★ إضافة (الإصدار 14 — الجزء صفر): ضمان حساب الأدمن عند كل إقلاع —
@@ -3776,6 +3801,16 @@ class App(tk.Tk):
 
         bar = tk.Frame(p, bg=BG); bar.pack(fill="x", padx=25, pady=(0, 18))
         self.mk_btn(bar, "🗑 حذف العملية المحددة", self.delete_selected, RED).pack(side="right", padx=6)
+        # ★★★ إضافة (الإصدار 18 — المشكلة 2): زر «✏️ تصحيح العملية المحددة» —
+        # يظهر لمن يملك صلاحية «✏️ تصحيح عملية» فقط (مدير/أدمن افتراضياً):
+        # نسخ الأصل كاملاً لسلة المحذوفات بوسم «تصحيح» ثم تحديث نفس الصف
+        # بنفس رقمه مع توثيق كل تغيير قبل ← بعد في سجل التدقيق — ماضٍ لا يُمحى
+        self.btn_correct_op = self.mk_btn(bar, "✏️ تصحيح العملية المحددة",
+                                          self.correct_selected_op, "#0d9488")
+        add_tip(self.btn_correct_op, "تصحيح العملية المحددة (لعمليات يوم العمل المفتوح فقط) — "
+                                     "الأصل يُحفظ في سلة المحذوفات وكل تغيير يُوثق قبل ← بعد في سجل التدقيق")
+        if self.has_permission("edit_op"):
+            self.btn_correct_op.pack(side="right", padx=6)
         # ★ إضافة (الإصدار 14 — البند 12): زر استعادة آخر عملية محذوفة من سلة
         # المحذوفات + زر فتح السلة كاملة (استعادة أي صف) — لمن يملك صلاحية الحذف
         b_undo = self.mk_btn(bar, "♻️ آخر حذف", self.restore_last_deleted, "#0d9488")
@@ -3913,6 +3948,258 @@ class App(tk.Tk):
         audit("حذف عملية", f"رقم {sel[0]}")     # ★ إضافة (ميزة 2): تسجيل الحذف
         self.refresh_today(); self.refresh_stats()
         self.lbl_status.config(text="🗑 تم حذف العملية (قابلة للاستعادة من ♻️ آخر حذف)", fg=RED)
+
+    # ═══════════════════════════════════════════════════════
+    # ★★★ إضافة (الإصدار 18 — المشكلة 2): تصحيح عمليات يوم العمل ✏️ ★★★
+    # تعديل حقيقي بماضٍ لا يُمحى: الأصل يُنسخ كاملاً إلى سلة المحذوفات بوسم
+    # «تصحيح — الأصل [#id]» ثم تُحدَّث العملية نفسها بنفس رقمها (فلا ينكسر
+    # أي ربط مرتجعات أو مراجع) ويوثق سجل التدقيق كل تغيير قبل ← بعد —
+    # لعمليات يوم العمل المفتوح فقط، ولمن يملك «✏️ تصحيح عملية» فقط
+    # ═══════════════════════════════════════════════════════
+    def correct_selected_op(self):
+        """★ إضافة (الإصدار 18 — المشكلة 2): زر «✏️ تصحيح العملية المحددة» —
+        بوابة الصلاحية والتاريخ ثم نافذة التصحيح: لمن يملك صلاحية «✏️ تصحيح
+        عملية» فقط، وعلى عمليات يوم العمل المفتوح حصراً (يوم مغلق: رسالة
+        إعادة الفتح من الأرشيف)"""
+        if not self.has_permission("edit_op"):
+            messagebox.showwarning("صلاحية", "ليست لديك صلاحية «✏️ تصحيح عملية»")
+            return
+        sel = self.tv_today.selection()
+        if not sel:
+            messagebox.showinfo("تنبيه", "اختر عملية من الجدول أولاً"); return
+        d = business_day_open()
+        if not d:
+            messagebox.showwarning("لا يوم عمل مفتوح",
+                "لا يمكن التصحيح — لا يوم عمل مفتوح.\n"
+                "اضغط «▶️ بدء يوم جديد» في شاشة عمليات يوم العمل.")
+            return
+        if is_closed(d):
+            messagebox.showwarning("اليوم مغلق",
+                "لا يمكن التصحيح على يوم مغلق.\n"
+                "أعد فتح اليوم أولاً من الأرشيف.")
+            return
+        op_id = int(sel[0])
+        with connect() as conn:
+            row = conn.execute("SELECT * FROM operations WHERE id=?", (op_id,)).fetchone()
+        if row is None or row["date"] != d:
+            messagebox.showwarning("تنبيه",
+                "التصحيح متاح لعمليات يوم العمل المفتوح فقط —\n"
+                "هذه العملية ليست ضمنه (ربما حُذفت أو تغيّر اليوم في الأثناء)")
+            return
+        self._correct_op_dialog(row)
+
+    def _correct_op_dialog(self, row):
+        """★ إضافة (الإصدار 18 — المشكلة 2): نافذة التصحيح — نفس حقول العملية
+        معبأة بقيمها (الصنف/الكمية/السعر/النوع/العميل)، وقيود المرتجع المحفوظة:
+        سعر المرتجع المربوط بأصل مقفول بسعر الأصل، وكميته ضمن المتبقي من أصله،
+        والربط بالأصل لا ينكسر أبداً (النوع والصنف والسعر مقفلة له) — وعملية
+        بيع عليها مرتجعات مربوطة يُقفل صنفها ولا تنزل كميتها دون مجموع
+        مرتجعاتها حمايةً للربط. الحفظ بالتسلسل الصارم: (1) نسخة الأصل كاملة
+        إلى سلة المحذوفات بوسم «تصحيح — الأصل [#id]» (2) تحديث العملية نفسها
+        بنفس رقمها (3) توثيق كل تغيير قبل ← بعد في سجل التدقيق (4) تحديث فوري
+        للشريط العلوي وجدول اليوم"""
+        op_id = row["id"]
+        is_ret = row["type"] == "مرتجع"
+        orig_id = row["original_op_id"]
+        # الأصل المرتبط (إن وُجد) — سعره هو السعر المقفول للمرتجع المربوط
+        orig_row = None
+        if is_ret and orig_id:
+            with connect() as conn:
+                orig_row = conn.execute("SELECT * FROM operations WHERE id=?",
+                                        (orig_id,)).fetchone()
+        # مرتجعات مربوطة بهذه العملية إن كانت أصلاً — تقيد صنفها وكميتها
+        with connect() as conn:
+            linked_qty = conn.execute(
+                "SELECT COALESCE(SUM(quantity),0) FROM operations "
+                "WHERE type='مرتجع' AND original_op_id=?", (op_id,)).fetchone()[0]
+        has_linked = linked_qty > RET_EPS
+
+        win = self.register_window(tk.Toplevel(self))
+        win.title("✏️ تصحيح عملية")
+        win.configure(bg=BG); win.resizable(False, False)
+        win.transient(self)
+        try:
+            win.grab_set()
+        except Exception:
+            pass
+        card = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+        card.pack(fill="both", expand=True, padx=18, pady=14)
+        # القاعدة الذهبية: زرا الحفظ/الإلغاء يُحزمان side="bottom" أولاً
+        fr_btns = tk.Frame(card, bg=CARD)
+        fr_btns.pack(side="bottom", fill="x", pady=(8, 12))
+        tk.Label(card, text="✏️ تصحيح عملية", bg=CARD, fg=DARK, font=FT).pack(pady=(12, 2))
+        tk.Label(card, text=f"العملية رقم #{op_id} — {row['date']} ({day_name(row['date'])})"
+                            f" — البائع: {row['seller_name'] or '—'}",
+                 bg=CARD, fg=GRAY, font=("Segoe UI", 9)).pack(pady=(0, 2))
+        tk.Label(card, text="الأصل يُحفظ كاملاً في سلة المحذوفات بوسم «تصحيح» "
+                            "وكل تغيير يُوثق قبل ← بعد في سجل التدقيق",
+                 bg=CARD, fg=GRAY, font=("Segoe UI", 9)).pack(pady=(0, 6))
+
+        def frow(label, width=14):
+            fr = tk.Frame(card, bg=CARD); fr.pack(fill="x", padx=16, pady=4)
+            tk.Label(fr, text=label, bg=CARD, fg=DARK, font=FB, width=width,
+                     anchor="e").pack(side="right")
+            inner = tk.Frame(fr, bg=CARD)
+            inner.pack(side="right", padx=(0, 8))
+            return inner
+
+        i_item = frow("اسم الصنف:")
+        cb_item = ttk.Combobox(i_item, font=F, width=22)
+        cb_item.pack(side="right", ipady=4)
+        cb_item.set(row["item_name"])
+        try:
+            cb_item["values"] = self.cb_item["values"]   # نفس قائمة الأصناف القائمة
+        except Exception:
+            pass
+
+        i_qty = frow("الكمية:")
+        e_qty = tk.Entry(i_qty, font=F, justify="center", relief="solid", bd=1, width=22)
+        e_qty.pack(side="right", ipady=4)
+        e_qty.insert(0, f'{row["quantity"]:g}')
+        digits_only_filter(e_qty)
+
+        i_price = frow("السعر:")
+        e_price = tk.Entry(i_price, font=F, justify="center", relief="solid", bd=1, width=22)
+        e_price.pack(side="right", ipady=4)
+        e_price.insert(0, f'{row["price"]:g}')
+        digits_only_filter(e_price)
+
+        trow = tk.Frame(card, bg=CARD); trow.pack(fill="x", padx=16, pady=(6, 2))
+        tk.Label(trow, text="النوع:", bg=CARD, fg=DARK, font=FB).pack(side="right", padx=(0, 10))
+        type_var = tk.StringVar(value=row["type"])
+        type_btns = {}
+        for txt, col in [("نقداً", GREEN), ("شبكة", ACCENT), ("مرتجع", RED)]:
+            rb = tk.Radiobutton(trow, text=txt, variable=type_var, value=txt, font=FB,
+                                fg=col, bg=CARD, selectcolor="#dbeafe", activebackground=CARD,
+                                activeforeground=col, indicatoron=0, width=8, bd=1,
+                                relief="solid", cursor="hand2")
+            rb.pack(side="right", padx=5)
+            type_btns[txt] = rb
+
+        i_cust = frow("العميل:")
+        e_cust = tk.Entry(i_cust, font=F, justify="center", relief="solid", bd=1, width=22)
+        e_cust.pack(side="right", ipady=4)
+        e_cust.insert(0, row["customer_name"] or "")
+
+        lbl_rule = tk.Label(card, text="", bg=CARD, fg="#0d9488",
+                            font=("Segoe UI", 9, "bold"), wraplength=370, justify="center")
+        lbl_rule.pack(pady=(4, 0))
+        lbl_err = tk.Label(card, text="", bg=CARD, fg=RED,
+                           font=("Segoe UI", 9, "bold"), wraplength=370, justify="center")
+        lbl_err.pack(pady=(2, 0))
+
+        # ----- قيود التصحيح حسب نوع العملية (حماية لربط المرتجعات) -----
+        if is_ret and orig_id:
+            # مرتجع مربوط بأصل: النوع والصنف مقفلان والسعر بسعر الأصل مقفل
+            # والكمية ضمن المتبقي (بإضافة كمية هذا المرتجع نفسه للمتاح) —
+            # الربط بالأصل لا ينكسر أبداً
+            for rb in type_btns.values():
+                rb.config(state="disabled")
+            cb_item.config(state="disabled")
+            e_price.config(state="disabled", disabledforeground=DARK)
+            _avail18 = return_remaining_of(orig_id) + (row["quantity"] or 0)
+            lbl_rule.config(text=(f"↩ مرجع: العملية رقم #{orig_id} — بسعر الأصل "
+                                  f"{((orig_row['price'] if orig_row else row['price']) or 0):g} (مقفل) — "
+                                  f"المتاح للتصحيح: {_avail18:g}"))
+        elif is_ret:
+            # مرتجع قديم غير مربوط (قبل الإصدار 16): يبقى بلا ربط كما هو —
+            # النوع مقفل مرتجعاً، والصنف والسعر والكمية قابلة للتصحيح
+            for rb in type_btns.values():
+                rb.config(state="disabled")
+            lbl_rule.config(text="↩ مرجع: — (مرتجع قديم غير مربوط — يبقى بلا ربط كما هو)")
+        else:
+            # عملية بيع: النوع بين نقداً وشبكة فقط (لا يتحول بيع إلى مرتجع من
+            # هنا — المرتجع يُسجل من شاشة العملية الجديدة بأصله)، وإن كانت
+            # أصلاً لمرتجعات مربوطة فالصنف مقفل والكمية لا تنزل دون مجموعها
+            type_btns["مرتجع"].config(state="disabled")
+            if has_linked:
+                cb_item.config(state="disabled")
+                lbl_rule.config(text=f"↩ عليها مرتجعات مربوطة بمجموع {linked_qty:g} — "
+                                     "الصنف مقفل والكمية لا تنزل دون مجموعها (حماية للربط)")
+
+        def do_save():
+            item = cb_item.get().strip()
+            if not item:
+                lbl_err.config(text="اكتب اسم الصنف أولاً"); shake_widget(card); return
+            q = to_num(e_qty.get())
+            if q is None or q <= 0:
+                lbl_err.config(text=f"الكمية غير صحيحة: «{e_qty.get()}» — أدخل رقماً أكبر من صفر")
+                shake_widget(card); return
+            t = type_var.get()
+            if is_ret and orig_id:
+                # مرتجع مربوط: السعر بسعر الأصل دائماً والكمية ضمن المتبقي
+                pr = (orig_row["price"] if orig_row else row["price"]) or 0
+                avail = return_remaining_of(orig_id) + (row["quantity"] or 0)
+                if q > avail + RET_EPS:
+                    lbl_err.config(text=f"الكمية المتاحة للتصحيح من العملية رقم #{orig_id}: {avail:g}")
+                    shake_widget(card); return
+            else:
+                pr = to_num(e_price.get())
+                if pr is None or pr < 0:
+                    lbl_err.config(text=f"السعر غير صحيح: «{e_price.get()}» — أدخل رقماً صحيحاً")
+                    shake_widget(card); return
+                if (not is_ret) and has_linked and q < linked_qty - RET_EPS:
+                    lbl_err.config(text=f"الكمية لا يمكن أن تنزل دون مجموع المرتجعات "
+                                        f"المربوطة بها ({linked_qty:g})")
+                    shake_widget(card); return
+            cust = e_cust.get().strip()
+            total = (-q * pr) if t == "مرتجع" else (q * pr)
+            # قائمة التغييرات قبل ← بعد (تُعرض للتأكيد وتُوثق في سجل التدقيق)
+            changes = []
+            if item != row["item_name"]:
+                changes.append(f"الصنف {row['item_name']}→{item}")
+            if q != (row["quantity"] or 0):
+                changes.append(f"الكمية {row['quantity']:g}→{q:g}")
+            if pr != (row["price"] or 0):
+                changes.append(f"السعر {row['price']:g}→{pr:g}")
+            if t != row["type"]:
+                changes.append(f"النوع {row['type']}→{t}")
+            if cust != (row["customer_name"] or ""):
+                changes.append(f"العميل {row['customer_name'] or '—'}→{cust or '—'}")
+            if not changes:
+                messagebox.showinfo("لا تغييرات", "لم تُغيَّر أي قيمة — لا شيء يُحفظ",
+                                    parent=win)
+                return
+            if not messagebox.askyesno("تأكيد التصحيح",
+                    f"تصحيح العملية رقم #{op_id}:\n\n" + "\n".join(changes) +
+                    "\n\nسيُحفظ الأصل كاملاً في سلة المحذوفات بوسم «تصحيح»\n"
+                    "ثم تُحدَّث العملية بنفس رقمها ويُوثق كل تغيير في سجل التدقيق.\n"
+                    "هل تريد المتابعة؟", parent=win):
+                return
+            # (1) نسخة الأصل كاملة إلى سلة المحذوفات بوسم «تصحيح — الأصل [#id]»
+            try:
+                with connect() as conn:
+                    fresh = conn.execute("SELECT * FROM operations WHERE id=?",
+                                         (op_id,)).fetchone()
+                if fresh is not None:
+                    recycle_add(fresh,
+                                f"تصحيح — الأصل [#{op_id}] بواسطة {CURRENT_USER['name']}")
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+            # (2) تحديث العملية نفسها بنفس رقمها — لا ينكسر أي ربط أو مرجع
+            try:
+                with connect() as conn:
+                    conn.execute("UPDATE operations SET item_name=?,quantity=?,price=?,"
+                                 "total=?,type=?,customer_name=? WHERE id=?",
+                                 (item, q, pr, total, t, cust, op_id))
+            except Exception as e:
+                messagebox.showerror("خطأ في الحفظ", f"تعذر حفظ التصحيح:\n{e}", parent=win)
+                return
+            # (3) توثيق كل تغيير قبل ← بعد في سجل التدقيق
+            audit("تصحيح عملية",
+                  f"[#{op_id}] بواسطة {CURRENT_USER['name']}: " + "، ".join(changes))
+            # (4) تحديث فوري للشريط العلوي وجدول اليوم (وقائمة الأصناف)
+            self.refresh_today(); self.refresh_stats(); self.refresh_items()
+            self.lbl_status.config(
+                text=f"✏️ تم تصحيح العملية #{op_id} — الأصل محفوظ في سلة المحذوفات",
+                fg=GREEN)
+            win.destroy()
+
+        self.mk_btn(fr_btns, "💾 حفظ التصحيح", do_save, GREEN).pack(side="right", padx=6)
+        self.mk_btn(fr_btns, "إلغاء", win.destroy, "#475569").pack(side="right", padx=6)
+        e_qty.bind("<Return>", lambda _e: do_save())
+        e_price.bind("<Return>", lambda _e: do_save())
+        place_window(win, 500)
 
     # ★★★ إضافات (الإصدار 14 — البند 12): استعادة المحذوفات ♻️ ★★★
     # الزران في شريط عمليات اليوم يستدعيان هاتين الدالتين — لمن يملك صلاحية
@@ -4887,6 +5174,22 @@ class App(tk.Tk):
     def build_invoice_page(self, p):
         self.page_head(p, "🧾 فاتورة أصناف", "أدخل عدة أصناف ثم احفظ الفاتورة كاملة دفعة واحدة")
 
+        # ★★★ إصلاح (الإصدار 18 — المشكلة 1): شريط إجراءات الفاتورة السفلي
+        # يُحزم side="bottom" أولاً (قاعدة الأزرار المثبتة) قبل النموذج والجدول —
+        # كان يُحزم آخر شيء بعد جدول السلة المتمدد، والمساحة المطلوبة للصفحة
+        # أكبر من المتاح في النافذة، فلا يُخصص للشريط أي مساحة إطلاقاً فيختفي
+        # زر الحفظ كلياً (سلة فخ) — الآن الزران مثبتان أسفل الصفحة دائماً مهما
+        # طال الجدول أو صغرت الشاشة، وزر الحفظ الأخضر البارز أول الصف (يمين)
+        bar = tk.Frame(p, bg=BG)
+        bar.pack(side="bottom", fill="x", padx=25, pady=(6, 14))
+        b_save_inv = self.mk_btn(bar, "💾 حفظ الفاتورة كاملة", self.save_invoice, GREEN)
+        b_save_inv.pack(side="right", padx=6, ipadx=14)
+        add_tip(b_save_inv, "حفظ كل أصناف السلة دفعة واحدة كعمليات على يوم العمل التجاري "
+                            "باسمك — تأكيد بالعدد والإجمالي ثم تفريغ السلة وسؤال تصدير Excel")
+        b_inv_rm = self.mk_btn(bar, "🗑 إزالة المحدد من السلة", self.remove_from_cart, RED)
+        b_inv_rm.pack(side="right", padx=6)
+        add_tip(b_inv_rm, "إزالة الصنف المحدد من السلة قبل الحفف")
+
         form = tk.Frame(p, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
         form.pack(fill="x", padx=25, pady=8)
 
@@ -4996,10 +5299,8 @@ class App(tk.Tk):
         add_tip(b_upd, "تطبيق قيم حقلي الكمية والسعر على الصف المحدد وإعادة حسابه — بلا حذف وإعادة إدخال")
         tk.Label(qbar, text="نقر مزدوج على أي صف لتعديله بالكامل ✏️", bg=CARD, fg=GRAY,
                  font=("Segoe UI", 9)).pack(side="left", padx=8)
-
-        bar = tk.Frame(p, bg=BG); bar.pack(fill="x", padx=25, pady=(0, 18))
-        self.mk_btn(bar, "🗑 إزالة المحدد من السلة", self.remove_from_cart, RED).pack(side="right", padx=6)
-        self.mk_btn(bar, "💾 حفظ الفاتورة كاملة", self.save_invoice, ORANGE).pack(side="left", padx=6)
+        # (شريط إجراءات الفاتورة — حفظ/إزالة — انتقل لأعلى الدالة ليُحزم
+        # side="bottom" أولاً فوق كل شيء: إصلاح الإصدار 18 — المشكلة 1)
 
         self.cart = []   # السلة: قائمة الأصناف قبل الحفظ
         for w in (self.e_inv_qty, self.e_inv_price):
@@ -5494,7 +5795,16 @@ class App(tk.Tk):
         if not self.has_permission("add_ops"):
             messagebox.showwarning("صلاحية", "ليست لديك صلاحية «إضافة عمليات وفواتير»")
             return
-        d = today_str()
+        # ★ إصلاح (الإصدار 18 — المشكلة 1): الحفظ على يوم العمل التجاري المفتوح
+        # بتاريخه لا بتاريخ الجهاز — مطابقةً تامة لسلوك حفظ عملية جديدة save_op
+        # القائم (كانت الفاتورة تُحفظ بتاريخ اليوم فتنقسم عمليات ما قبل حد
+        # 05:00 فجراً على تاريخ غير تاريخ يوم عملها، وتُحفظ بلا يوم مفتوح أصلاً)
+        d = business_day_open()
+        if not d:
+            messagebox.showwarning("لا يوم عمل مفتوح",
+                "لا يمكن حفظ الفاتورة — لا يوم عمل مفتوح.\n"
+                "اضغط «▶️ بدء يوم جديد» في شاشة عمليات يوم العمل.")
+            return
         if is_closed(d):
             messagebox.showwarning("اليوم مغلق",
                 "تم إغلاق اليوم وحفظ تقريره.\nلا يمكن حفظ فاتورة على يوم مغلق.\n"
@@ -6666,6 +6976,17 @@ class App(tk.Tk):
                     self.btn_audit_integrity.pack(side="left", padx=6, pady=6)
                 else:
                     self.btn_audit_integrity.pack_forget()
+        except Exception:
+            pass
+        # ★ إضافة (الإصدار 18 — المشكلة 2): زر تصحيح العملية يتكيف مع صلاحيات
+        # المستخدم الجديد بعد التبديل — يظهر لمن يملك «✏️ تصحيح عملية» فقط
+        # (تعديل ضروري محدود: بدون هذا الكتلة يبقى الزر بحالة مستخدمه السابق)
+        try:
+            if getattr(self, "btn_correct_op", None) is not None:
+                if self.has_permission("edit_op"):
+                    self.btn_correct_op.pack(side="right", padx=6)
+                else:
+                    self.btn_correct_op.pack_forget()
         except Exception:
             pass
 
