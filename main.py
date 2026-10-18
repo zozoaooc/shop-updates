@@ -310,7 +310,10 @@ except Exception:
 import urllib.request   # ★ إضافة (إصدار 10): جلب التحديث — المكتبة القياسية وحدها
 import threading        # ★ إضافة (إصدار 10): فحص خلفي لا يجمّد الواجهة أبداً
 
-VERSION = "2.10"         # إصدار البرنامج الحالي — يُقارن برقم version.txt
+# ★ تعديل مصرح به (الإصدار 21 — الاستثناء ج): ثابت VERSION من "2.0" إلى
+# "2.11" — أمر المالك الصريح لنشر إصلاح الإغلاق التلقائي عبر نظام التحديث
+# القائم (النهج القديم «يبقى 2.0 في التسليم» انتهى بهذا الأمر الصريح)
+VERSION = "2.11"        # إصدار البرنامج الحالي — يُقارن برقم version.txt
 UPDATE_VERSION_URL = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/version.txt"
 UPDATE_FILE_URL    = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/main.py"
 # ★ إضافة (الإصدار 15 — الجزء الثاني): ملاحظات الإصدارات (changelog) —
@@ -1920,6 +1923,157 @@ def set_device_printer(name):
     طابعته الخاصة وتغييرها لا يؤثر على غيره)"""
     set_setting(device_printer_key(), (name or "").strip())
 
+
+# ═════════════════════════════════════════════════════
+# ★★★ إضافات (الإصدار 21): اليوم التجاري المركزي + أوقات الحركات ★★★
+# get_business_day المركزية بقاعدة 05:00 + اشتقاق اليوم التجاري من وقت
+# أي حركة + مطابقة الحركات بأوقاتها الحقيقية من سجل التدقيق (قراءة فقط)
+# ═══════════════════════════════════════════════════
+
+def get_business_day():
+    """★ إضافة (الإصدار 21 — المطلوب 1-1): الدالة المركزية الوحيدة لليوم
+    التجاري — تحسبه من وقت الجهاز بالقاعدة الثابتة: الساعة بنظام 24 أقل
+    من 05:00 فاليوم التجاري هو تاريخ الأمس، ومن 05:00 فما فوق هو تاريخ
+    اليوم — نفس قاعدة business_now_date القائمة حرفياً (بلا أي تعديل
+    عليها) وBUSINESS_DAY_START_HOUR=5 كما هو أساس كل الحسابات"""
+    return business_now_date()
+
+def derive_business_day_from_dt(dt):
+    """★ إضافة (الإصدار 21 — المطلوب 2): اليوم التجاري الصحيح من وقت كامل —
+    الساعة بنظام 24 أقل من 05:00 = تاريخ الأمس، وإلا تاريخ اليوم نفسه"""
+    if dt is None:
+        return ""
+    base = dt.date()
+    if dt.hour < BUSINESS_DAY_START_HOUR:
+        return date.fromordinal(base.toordinal() - 1).isoformat()
+    return base.isoformat()
+
+def parse_dt_str(s):
+    """★ إضافة (الإصدار 21 — المطلوب 2): قراءة "YYYY-MM-DD HH:MM[:SS]"
+    بصمت — يرجع datetime أو None عند أي فشل"""
+    txt = str(s or "").strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(txt[:len(fmt) + 2], fmt)
+        except Exception:
+            continue
+    return None
+
+def op_business_day_from_date_val(v):
+    """★ إضافة (الإصدار 21 — المطلوب 2): اليوم التجاري لقيمة حقل تاريخ حركة —
+    إن حمل وقتاً (YYYY-MM-DD HH:MM) طُبّق عليه حد 05:00، وإن كان تاريخاً
+    مجرداً فهو يومه التجاري كما هو (الآلية الموجودة في الكود الحالي)"""
+    s = str(v or "").strip()
+    if " " in s:
+        dt = parse_dt_str(s)
+        if dt is not None:
+            return derive_business_day_from_dt(dt)
+    return s[:10]
+
+def _op_save_audit_signature(r):
+    """★ إضافة (الإصدار 21 — المطلوب 2): إعادة بناء نص تفاصيل سجل التدقيق
+    لحفظ عملية واحدة من صفها في operations — مطابق حرفياً لما يبنيه
+    save_op القائم، لأجل مطابقة ثابتة بين الحركات وأوقاتها الحقيقية"""
+    cust = r["customer_name"] or ""
+    sig = (f"{r['type']}: {r['item_name']} — {r['quantity']:g} × {r['price']:g} = {r['total']:g}"
+           + (f" | عميل: {cust}" if cust else ""))
+    oid = r["original_op_id"] if "original_op_id" in r.keys() else None
+    if oid:
+        sig += f" | مرتبط بالعملية رقم {oid}"
+    return sig
+
+def match_op_times_from_audit():
+    """★ إضافة (الإصدار 21 — المطلوب 2): مطابقة كل حركة بوقتها الحقيقي من
+    سجل التدقيق (قراءة فقط — السلسلة الموقعة لا تُمس): عمليات الحفظ تُوثق
+    في audit_log بطابع زمني كامل يسبق أي إغلاق، والترتيب في الجدولين
+    متطابق زمنياً — فتُطابق كل عملية بتوقيعها الحرفي الكامل (حفظ عملية
+    واحدة، أو حفظ فاتورة بعدة أصناف متتابعة تشترك بنفس العميل)، ونافذة
+    تطلّع صغيرة تتجاوز صفوف سجلات قديمة لعمليات حُذفت من الجدول، وما لم
+    يُطابَق (عمليات قديمة أو مستعادة من السلة أو صيغ قديمة) يبقى على
+    تاريخه المسجل بلا وقت. يرجع {op_id: "YYYY-MM-DD HH:MM:SS"}"""
+    try:
+        with connect() as conn:
+            ops = conn.execute("SELECT * FROM operations ORDER BY id").fetchall()
+            logs = conn.execute("SELECT ts,action,details FROM audit_log "
+                                "WHERE action IN ('حفظ عملية','حفظ فاتورة') "
+                                "ORDER BY id").fetchall()
+    except Exception:
+        return {}
+    out = {}
+    j, n_logs = 0, len(logs)
+    LOOK = 8          # نافذة تطلع تتجاوز صفوف سجل قديمة لعمليات حُذفت
+    for idx, r in enumerate(ops):
+        if r["id"] in out:            # سبقت مطابقته ضمن فاتورة سابقة
+            continue
+        if j >= n_logs:
+            break
+        paired = False
+        for m in range(LOOK):
+            jj = j + m
+            if jj >= n_logs:
+                break
+            row = logs[jj]
+            if row["action"] == "حفظ عملية":
+                if row["details"] == _op_save_audit_signature(r):
+                    out[r["id"]] = row["ts"]
+                    j = jj + 1
+                    paired = True
+                    break
+            elif row["action"] == "حفظ فاتورة":
+                run, tot, tset, nlinked = [], 0.0, {}, 0
+                k = idx
+                hit = None
+                while k < len(ops) and len(run) < 200:
+                    o = ops[k]
+                    run.append(o)
+                    tot += (o["total"] or 0)
+                    tset[o["type"]] = tset.get(o["type"], 0) + 1
+                    if o["type"] == "مرتجع" and o["original_op_id"]:
+                        nlinked += 1
+                    cust = o["customer_name"] or ""
+                    sig = (f"{len(run)} صنف — المجموع {money(tot)} — الأنواع: "
+                           + "، ".join(f"{kk} {vv}" for kk, vv in tset.items())
+                           + (f" | عميل: {cust}" if cust else "")
+                           + (f" | مرتجعات مربوطة بالأصل: {nlinked}" if nlinked else ""))
+                    if row["details"] == sig:
+                        hit = run
+                        break
+                    nxt = ops[k + 1] if k + 1 < len(ops) else None
+                    if nxt is None or (nxt["customer_name"] or "") != cust:
+                        break
+                    k += 1
+                if hit is not None:
+                    for o2 in hit:
+                        out[o2["id"]] = row["ts"]
+                    j = jj + 1
+                    paired = True
+                    break
+        if paired:
+            continue
+        # بلا مطابقة في النافذة: العملية تبقى بلا وقت على تاريخها المسجل
+    return out
+
+def op_true_day_map():
+    """★ إضافة (الإصدار 21 — المطلوب 2): اليوم التجاري الصحيح لكل حركة —
+    المطابَقة بوقتها الحقيقي وحد 05:00، وغير المطابَقة يومها = تاريخها
+    المسجل نفسه (الآلية القائمة). يرجع {op_id: (ts أو None, اليوم_التجاري)"""
+    matched = match_op_times_from_audit()
+    try:
+        with connect() as conn:
+            ops = conn.execute("SELECT id, date FROM operations ORDER BY id").fetchall()
+    except Exception:
+        return {}
+    out = {}
+    for r in ops:
+        ts = matched.get(r["id"])
+        if ts:
+            dt = parse_dt_str(ts)
+            day = derive_business_day_from_dt(dt) if dt else op_business_day_from_date_val(r["date"])
+        else:
+            day = op_business_day_from_date_val(r["date"])
+        out[r["id"]] = (ts, day)
+    return out
+
 def _print_install_packages(user_flag=False):
     """★ إضافة (الإصدار 19 — القسم 1 — البند ٢ب): تنفيذ أمر التثبيت من نفس
     بايثون البرنامج حرفياً كما تنص المواصفة —
@@ -3451,6 +3605,20 @@ class App(tk.Tk):
                 "«⚙️ إعدادات الطباعة» وتخص هذا الجهاز وحده (لكل جهاز طابعته الخاصة)")
         self.refresh_printer_status_bar()   # النص الأولي من مفتاح هذا الجهاز
 
+        # ★★★ إضافة (الإصدار 21 — المطلوب 2-3): اليوم التجاري الحالي في شريط
+        # الحالة السفلي — للجميع قراءة فقط، يتحدث تلقائيًا فور كل إغلاق
+        # (تلقائي أو يدوي) وفتح يوم جديد (يديره refresh_business_day_status_bar
+        # من الدالة المركزية نفسها) — يُحزم يسارًا مقابل لافتة الطابعة يمينًا
+        self.lbl_bday_status = tk.Label(self.bottom_status_bar,
+                                        text="📅 اليوم التجاري الحالي: …",
+                                        bg=CARD, fg=GRAY,
+                                        font=("Segoe UI", 9, "bold"), anchor="w")
+        self.lbl_bday_status.pack(side="left", padx=14, pady=3)
+        add_tip(self.lbl_bday_status,
+                "اليوم التجاري المفتوح الآن — يُغلق تلقائيًا عند 05:00 فجرًا (وقبل كل "
+                "حفظ تتحقق الدالة المركزية أنه التاريخ الصحيح) ويبدأ يوم جديد فورًا")
+        self.refresh_business_day_status_bar()   # النص الأولي من اليوم المفتوح
+
         # ★ الشريط العلوي للإحصائيات — يظهر في كل الشاشات
         self.build_stats_bar()
 
@@ -3511,6 +3679,20 @@ class App(tk.Tk):
         # = دخول صامت، أقدم من اليوم = ثلاثة خيارات (إغلاقه كتقرير / الاستمرار
         # عليه بعد منتصف الليل / إلغاء الدخول)، ولا يوم مخزن = بدء يوم جديد
         # (بلا سؤال على قاعدة جديدة تماماً — توافق كامل مع الإصدارات السابقة)
+        # ★★★ إضافة (الإصدار 21 — المطلوب 1-3/أ+ب): نقطة التفتيش الأولى — قبل
+        # فتح الشاشة الرئيسية للمستخدم (تغطي كون الجهاز كان مطفأ وقت الفجر):
+        # الإغلاق التلقائي الصارم فورًا إن كان اليوم المخزن أقدم من اليوم التجاري
+        # الصحيح (بلا أي سؤال)، ثم جدولة مؤقت التكرار كل 60 ثانية الذي لا يخضع
+        # لأي صلاحية ولا يمكن لأحد إيقافه أو تعطيله بأي إعداد — ويعمل بعدها
+        # الفحص الذكي القائم كما هو (لن يجد ما يسأل عنه بعد الإغلاق التلقائي)
+        try:
+            self.ensure_business_day_current()
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+        try:
+            self.after(60000, self._bday_auto_close_tick)
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
         try:
             self.business_day_startup_check()
         except Exception as e:
@@ -3602,6 +3784,9 @@ class App(tk.Tk):
         "dash": "dashboard", "sellers": "perf_report",
         "users": "manager", "audit": "view_audit",
         "backups": "backup",
+        # ★ إضافة (الإصدار 21 — المطلوب 2): زر «حركات الأيام السابقة» —
+        # نافذة قراءة فقط للأدمن والمدير (لا تظهر للبائع نهائياً)
+        "past_days": "manager",
         # ★ تعديل مصرح به (الإصدار 20 — الاستثناء ب): زر «إعدادات الطباعة»
         # (اختيار الطابعة) صار «manager» = أدمن/مدير فقط — لا يظهر للبائع
         # نهائياً حتى لو مُنحت له صلاحية print_settings من شاشة الصلاحيات،
@@ -3614,7 +3799,9 @@ class App(tk.Tk):
     # نفس الأزرار الموجودة ونفس دوالها تماماً، تنظيم بصري فقط بعناوين فاصلة
     SIDEBAR_GROUPS = [
         ("العمليات", ["new", "invoice"]),
-        ("التقارير", ["today", "archive", "search", "dash", "sellers"]),
+        # ★ إضافة (الإصدار 21 — المطلوب 2): كلمة واحدة أُضيفت لقائمة «التقارير"
+        # (زر حركات الأيام السابقة) ولم يتغير أي شيء آخر في التنظيم
+        ("التقارير", ["today", "archive", "search", "dash", "sellers", "past_days"]),
         # ★ تعديل ضروري معلن (إصدار 10): إضافة زر التحديث لمجموعة «الإدارة»
         # كي يظهر تحت عنوانها ويُخفى عن البائع مع بقية أزرارها — كلمة واحدة
         # أُضيفت للقائمة ولم يتغير أي شيء آخر في التنظيم
@@ -3708,6 +3895,21 @@ class App(tk.Tk):
         add_tip(b_prn, "اختيار الطابعة الحرارية واسم المحل والطباعة التجريبية — للمدير فقط")
         if not manager_level(self.role):
             b_prn.pack_forget()
+
+        # ★ إضافة (الإصدار 21 — المطلوب 2): زر «حركات الأيام السابقة» — نافذة
+        # قراءة فقط للأدمن والمدير تجمع أيام daily_reports مع كل حركات كل يوم
+        # وأوقاتها الحقيقية، وفيها زر إصلاح اليومين المدموجين للأدمن وحده —
+        # يُخفى عن البائع (تديره NAV_PERMS مع refresh_sidebar_permissions كإخوته)
+        b_past = tk.Button(sb, text="🗓️  حركات الأيام السابقة", font=FB, bd=0, cursor="hand2",
+                          anchor="e", bg=SIDEBAR, fg="#cbd5e1", activebackground=ACCENT,
+                          activeforeground="white", padx=18, pady=11, highlightthickness=0,
+                          command=self.show_past_days)
+        b_past.pack(fill="x", padx=10, pady=3)
+        self.nav_buttons["past_days"] = b_past
+        add_tip(b_past, "أيام daily_reports من الأحدث للأقدم مع كل حركات اليوم "
+                        "وأوقاتها — قراءة فقط للأدمن والمدير")
+        if not manager_level(self.role):
+            b_past.pack_forget()
 
         # ★ إضافة (إصدار 7 — الطبقة 4): زر النسخ والاستعادة — للمدير فقط،
         # بنفس نمط أزرار الشريط الجانبي، ويُضاف لقائمة أزرار المدير كي يُخفى
@@ -4089,6 +4291,15 @@ class App(tk.Tk):
         if not self.has_permission("add_ops"):
             messagebox.showwarning("صلاحية", "ليست لديك صلاحية «إضافة عمليات وفواتير»")
             return
+        # ★★★ إضافة (الإصدار 21 — المطلوب 1-3/ج — الاستثناء ب): نقطة التفتيش
+        # قبل حفظ أي عملية بيع أو مرتجع مباشرة — يستحيل بعدها تسجيل حركة على
+        # يوم تجاري قديم: إن كان اليوم المخزن أقدم من اليوم التجاري الصحيح
+        # يُغلق تلقائيًا ويُفتح اليوم الجديد هنا قبل الحفظ (نفس الدالة المركزية
+        # الوحيدة، وبلا أي سؤال يعطل البيع الجاري)
+        try:
+            self.ensure_business_day_current()
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
         # ★ تعديل مصرح به (الإصدار 14 — الجزء الأول): الحفظ صار على يوم العمل
         # المفتوح لا تاريخ الجهاز (وبعد منتصف الليل يستمر على يوم الأمس)،
         # وبلا يوم مفتوح الحفظ ممنوع برسالة واضحة حتى يُبدأ يوم جديد
@@ -4274,8 +4485,23 @@ class App(tk.Tk):
         b_bin = self.mk_btn(bar, "🗑 سلة المحذوفات", self.recycle_bin_dialog, "#475569")
         b_bin.pack(side="right", padx=6)
         add_tip(b_bin, "نافذة كل العمليات المحذوفة — استعادة أي صف منها (آخر 50)")
-        self.btn_close = self.mk_btn(bar, "🔒 إغلاق اليوم وحفظ التقرير", self.close_day, ORANGE)
+        # ★ تعديل مصرح به (الإصدار 21 — الاستثناء أ — إصلاح آلية الإغلاق المعطلة):
+        # زر «إغلاق اليوم» القائم نفسه بنصه صار يستدعي المسار اليدوي الجديد
+        # manual_close_day_flow (تأكيد يوضح أنه سيبدأ يومًا جديدًا فورًا ثم الدالة
+        # المركزية الوحيدة بنوع manual_close_day في التدقيق) — الدالة القديمة
+        # close_day باقية كما هي بلا أي حذف لخدمة مسار فحص الإقلاع القائم
+        self.btn_close = self.mk_btn(bar, "🔒 إغلاق اليوم وحفظ التقرير",
+                                      self.manual_close_day_flow, ORANGE)
         self.btn_close.pack(side="left", padx=6)
+        # ★★★ إضافة (الإصدار 21 — المطلوب 3): زر «✏️ تعديل الحركة» — للأدمن
+        # والمدير فقط حصراً بالدور (لا يظهر للبائع نهائياً حتى لو كان هو من
+        # سجل الحركة)، يعمل بعد اختيار حركة من جدول اليوم التجاري الحالي فقط
+        self.btn_edit_op21 = self.mk_btn(bar, "✏️ تعديل الحركة", self.edit_selected_op_v21, "#1d4ed8")
+        add_tip(self.btn_edit_op21, "تعديل الحركة المحددة (حركات اليوم التجاري الحالي فقط) — "
+                                    "للأدمن والمدير فقط، والإجمالي يُحتسب تلقائيًا كمية × سعر، "
+                                    "وقبل الحفظ تأكيد بالقديمة والجديدة لكل حقل معدّل")
+        if manager_level(self.role):
+            self.btn_edit_op21.pack(side="left", padx=6)
         # ★★★ إضافة (الإصدار 17 — الإضافة 1): زر «🖨️ تقرير البائعين» — متاح
         # للجميع (البائع والمدير): معاينة أداء جميع البائعين ثم طباعتها أو
         # تصديرها — في شريط عمليات اليوم بجانب زر إغلاق اليوم
@@ -5125,6 +5351,611 @@ class App(tk.Tk):
                 self.update_closed_banner()
         except Exception:
             pass
+        # ★ إضافة (الإصدار 21 — المطلوب 1-5): زر «إغلاق اليوم» اليدوي خاص
+        # بالإدارة فقط (أدمن/مدير) ولا يظهر للبائع نهائياً — البوابة هنا في
+        # نقطة التجمع التي تُستدعى مع كل تحديث لليوم فتبقى صحيحة بعد تبديل
+        # المستخدم، وللبائع يوجد زر «▶️ بدء يوم جديد» القائم وحده إن لا يوم
+        try:
+            if hasattr(self, "btn_close") and not manager_level(self.role):
+                self.btn_close.pack_forget()
+        except Exception:
+            pass
+
+    # ═════════════════════════════════════════════════════
+    # ★★★ إضافات (الإصدار 21): الإغلاق التلقائي الصارم 🌅 ★★★
+    # الدالة المركزية الوحيدة + نقاط التفتيش + المسار اليدوي الجديد
+    # + شريط اليوم التجاري السفلي — ولا يتكرر منطق الإغلاق في أي مكان
+    # ═════════════════════════════════════════════════════
+    def _bday_auto_close_tick(self):
+        """★ إضافة (الإصدار 21 — المطلوب 1-3/ب): مؤقت التكرار كل 60 ثانية —
+        لا يخضع لأي صلاحية ولا يمكن لأحد إيقافه أو تعطيله بأي إعداد: يستدعي
+        الدالة المركزية ثم يعيد جدولة نفسه دائماً مهما حدث داخل الدورة"""
+        try:
+            self.ensure_business_day_current()
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+        finally:
+            try:
+                self.after(60000, self._bday_auto_close_tick)
+            except Exception:
+                pass
+
+    def ensure_business_day_current(self, force=False, event="auto_close_day"):
+        """★ إضافة (الإصدار 21 — المطلوب 1-2): الدالة المركزية الوحيدة —
+        تقارن اليوم المحفوظ في settings/business_day مع ناتج get_business_day():
+        — تطابقا (وبلا force): اليوم صحيح فلا شيء يُعمل
+        — اختلفا: إغلاق اليوم القديم تلقائيًا فورًا (إجمالياته من جدول operations
+          حتى لو خلا فتُسجَّل بإجماليات صفرية، مع closed_at بنظام 24) ثم فتح
+          اليوم الجديد بوضع ناتج get_business_day() بلا أي تدخل من أي مستخدم —
+          وإن كان الناتج مغلقاً بالأرشيف (حالة نادرة) فاليوم التالي له بنفس
+          مقترح «بدء يوم عمل جديد» القائم حرفياً، وإن ظل مغلقاً فُتح الأمر
+          لزر «▶️ بدء يوم جديد» القائم (بلا أي حالة مكسورة)
+        مع تحديث كل المجاميع والعدادات المعروضة فورًا لتنعكس على اليوم الجديد،
+        وإشعار عربي واضح غير معطِّل في المسار التلقائي. force=True هو مسار
+        الإغلاق اليدوي (نوع manual_close_day) وهو خيار مبكر اختياري لا يلغي
+        النظام التلقائي أبداً ولا يتأثر به. يرجع True إن جرى إغلاق فعلي"""
+        stored = business_day_open()
+        target = get_business_day()
+        # لا شيء يُعمل إن كان اليوم المخزن هو الصحيح — أو أحدث منه (يوم مفتوح
+        # بتاريخ مستقبلي بعد إغلاق يدوي مبكر أو بدء يدوي قائم: نفس دلالة
+        # «الدخول الصامت» في فحص الإقلاع القديم) — يُترك حتى يصير قديماً
+        # فيُغلق تلقائياً عند 05:00 التالي له كالمعتاد
+        if not force and stored is not None and stored >= target:
+            return False
+        do_close = False
+        if stored is not None:
+            if force:
+                if is_closed(stored):
+                    return False    # لا يوم مفتوح فعلاً — لا تقرير مزدوجاً أبداً
+                do_close = True
+            elif not is_closed(stored):
+                do_close = True     # (ومغلقاً سلفاً بتقريره: يُفتح الجديد فقط)
+        closed_done = False
+        if do_close:
+            # —— الإغلاق المركزي الوحيد (لا نسخ منه في أي مكان آخر) ——
+            n, cash, netw, rets, net = day_totals(stored)
+            closed_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+            with connect() as conn:
+                conn.execute("""INSERT INTO daily_reports(report_date,ops_count,total_sales,
+                                total_returns,net_total,total_cash,total_network,closed_at)
+                                VALUES(?,?,?,?,?,?,?,?)""",
+                             (stored, n, cash + netw, rets, net, cash, netw, closed_at))
+            audit(event, f"{stored}: {n} عملية — نقداً {money(cash)} | شبكة {money(netw)} | "
+                  f"مرتجعات {money(rets)} | إجمالي {money(net)} | أُغلق عند {closed_at}")
+            try:
+                del_setting(BDAY_KEY)
+            except Exception:
+                pass
+            closed_done = True
+        # فتح اليوم الجديد يُحل بعد الإغلاق فعلاً: فبعد إغلاق منتصف اليوم يكون
+        # ناتج get_business_day() نفسه مغلقاً بالتقرير المحفوظ للتو، فيُفتح
+        # اليوم التالي له بنفس مقترح «بدء يوم عمل جديد» القائم حرفياً
+        nd = target
+        if is_closed(nd):
+            nd2 = next_day(nd)
+            nd = None if is_closed(nd2) else nd2
+        if nd:
+            set_business_day(nd)    # الدالة القائمة توثق «بدء يوم عمل» بنفسها
+        # —— تحديث كل المجاميع والعدادات والشاشات فورًا ——
+        for _fn in ("refresh_stats", "refresh_today", "update_closed_banner", "refresh_archive"):
+            try:
+                getattr(self, _fn)()
+            except Exception:
+                pass
+        self.refresh_business_day_status_bar()
+        if closed_done and event == "auto_close_day":
+            # إكسسوارات الإغلاق القائمة نفسها بلا أي نوافذ هنا (سياق غير مراقب):
+            # النسخ الاحتياطي بعد كل إغلاق ناجح، والطباعة فقط إن كانت الطباعة
+            # التلقائية مفعلة وعلى طابعة مختارة لهذا الجهاز (بلا الافتراضية)
+            try:
+                bk_errors = make_auto_backup(stored)
+                if bk_errors:
+                    log_error(RuntimeError("؛ ".join(bk_errors)))
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+            try:
+                if get_setting("auto_print_daily") == "1":
+                    if get_device_printer():
+                        self.print_day_report(stored, closer=CURRENT_USER["name"],
+                                              when="بعد الإغلاق")
+                    else:
+                        log_error(RuntimeError("تخطي الطباعة التلقائية عند الإغلاق "
+                                               "التلقائي: لا طابعة مختارة لهذا الجهاز"))
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+            self._notify_auto_close(stored, nd or target, failed_open=(nd is None))
+        return closed_done
+
+    def _notify_auto_close(self, old_d, new_d, failed_open=False):
+        """★ إضافة (الإصدار 21 — المطلوب 1-2): إشعار عربي واضح غير معطِّل —
+        نافذة صغيرة عابرة بلا أي سؤال (لا تلغي ولا تعطّل أي عملية بيع جارية)،
+        تختفي وحدها بعد 10 ثوانٍ أو بضغطة زر"""
+        try:
+            win = self.register_window(tk.Toplevel(self))
+            win.title("إغلاق تلقائي لليوم التجاري")
+            win.configure(bg=BG)
+            win.resizable(False, False)
+            card = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=2)
+            card.pack(fill="both", expand=True)
+            tk.Label(card, text="🌅", bg=CARD, fg=DARK,
+                     font=("Segoe UI", 26)).pack(pady=(14, 2))
+            tk.Label(card, text=f"تم إغلاق يوم {old_d} تلقائيًا عند الساعة 05:00\n"
+                                f"وبدأ يوم تجاري جديد {new_d}",
+                     bg=CARD, fg=DARK, font=("Segoe UI", 11, "bold"),
+                     justify="center", wraplength=380).pack(padx=24, pady=(4, 8))
+            if failed_open:
+                tk.Label(card, text="⚠️ تعذر فتح اليوم الجديد تلقائيًا (تاريخه مغلقاً "
+                                    "بالأرشيف) — استخدم زر «▶️ بدء يوم جديد»",
+                         bg=CARD, fg=RED, font=("Segoe UI", 10, "bold"),
+                         justify="center", wraplength=380).pack(padx=24, pady=(0, 6))
+            self.mk_btn(card, "حسناً", win.destroy, ACCENT).pack(pady=(4, 14))
+            def _gone():
+                try:
+                    if win.winfo_exists():
+                        win.destroy()
+                except Exception:
+                    pass
+            win.after(10000, _gone)
+            place_window(win, 480, 260)
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+
+    def manual_close_day_flow(self):
+        """★ إضافة (الإصدار 21 — المطلوب 1-5) عبر الاستثناء المصرح (أ): المسار
+        اليدوي الجديد لزر «إغلاق اليوم» القائم — للأدمن والمدير فقط (لا يظهر
+        للبائع نهائياً ولا يعمل له)، رسالة تأكيد عربية توضح أنه سيُغلق اليوم
+        التجاري الحالي ويبدأ يوم جديد فورًا، وبعد الموافقة يُستدعى نفس الدوال
+        المركزية أعلاه (ensure_business_day_current وحدها — بلا أي تكرار لمنطق
+        الإغلاق في مكانين) بنوع manual_close_day في التدقيق، وبنفس إكسسوارات
+        الإغلاق القائمة حرفياً بعدها (النسخ الاحتياطي التلقائي ثم عرض التقرير
+        ثم خيار الطباعة) — والدالتان القديمتان close_day و_close_business_day
+        باقيتان كما هما بلا أي حذف لخدمة مسار فحص الإقلاع القائم، والمؤقت
+        التلقائي كل 60 ثانية يستمر كالمعتاد ولا يتأثر بالإغلاق اليدوي أبداً"""
+        if not manager_level(self.role):
+            messagebox.showwarning("صلاحية", "إغلاق اليوم يدويًا خاص بالإدارة فقط (أدمن/مدير)")
+            return
+        d = business_day_open()
+        if not d:
+            messagebox.showinfo("لا يوم عمل مفتوح",
+                "لا يوم عمل مفتوح — ابدأ يوماً جديداً بزر «▶️ بدء يوم جديد»")
+            return
+        if is_closed(d):
+            messagebox.showinfo("مغلق", "تم إغلاق هذا اليوم وحفظ تقريره مسبقاً")
+            return
+        n, cash, netw, rets, net = day_totals(d)
+        msg = (f"سيُغلق اليوم التجاري الحالي {d} ({day_name(d)}) ويُحفظ تقريره في الأرشيف،\n"
+               f"وسيبدأ يوم تجاري جديد فورًا تلقائيًا.\n\n"
+               f"ملخص يوم {d}:\nعدد العمليات: {n}\nنقداً: {money(cash)}\nشبكة: {money(netw)}\n"
+               f"المرتجعات: {money(rets)}\nالإجمالي: {money(net)}\n\n"
+               "✔ تأكد من مطابقة الدرج النقدي وكشف جهاز الشبكة قبل المتابعة.\n"
+               "هل تريد المتابعة؟")
+        if not messagebox.askyesno("إغلاق اليوم يدويًا", msg):
+            return
+        if not self.ensure_business_day_current(force=True, event="manual_close_day"):
+            return
+        try:
+            bk_errors = make_auto_backup(d)
+            if bk_errors:
+                log_error(RuntimeError("؛ ".join(bk_errors)))
+                messagebox.showwarning("تحذير النسخ الاحتياطي",
+                    "تم إغلاق اليوم وبدأ يوم جديد فورًا ✅\nلكن تعذر إتمام النسخ الاحتياطي:\n"
+                    "• " + "\n• ".join(bk_errors) + "\n\nسُجل الخطأ في error_log.txt.")
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+            messagebox.showwarning("تحذير النسخ الاحتياطي",
+                "تم إغلاق اليوم وبدأ يوم جديد فورًا ✅\n"
+                "لكن فشل النسخ الاحتياطي التلقائي (سُجل في error_log.txt).")
+        if messagebox.askyesno("تم", "تم إغلاق اليوم وبدء يوم جديد فورًا ✅\nهل تريد عرض التقرير الآن؟"):
+            self.open_day_details(d)
+        try:
+            if get_setting("auto_print_daily") == "1":
+                self.print_day_report(d, closer=CURRENT_USER["name"], when="بعد الإغلاق")
+            elif messagebox.askyesno("الطباعة", "هل تريد طباعة تقرير اليوم؟"):
+                self.print_day_report(d, closer=CURRENT_USER["name"], when="بعد الإغلاق")
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+        messagebox.showinfo("تم", f"أُغلق يوم {d} وبدأ يوم تجاري جديد "
+                                  f"{business_day_open()} فورًا.\n"
+                                  "العمليات التالية تُسجَّل عليه، والمؤقت التلقائي كل 60 "
+                                  "ثانية مستمر كالمعتاد.")
+
+    def refresh_business_day_status_bar(self):
+        """★ إضافة (الإصدار 21 — المطلوب 2-3): «اليوم التجاري الحالي:
+        [التاريخ]» في شريط الحالة السفلي للجميع — يتحدث تلقائيًا فور كل
+        إغلاق (تلقائي أو يدوي) وفتح يوم جديد، من الدالة المركزية نفسها"""
+        try:
+            if not hasattr(self, "lbl_bday_status"):
+                return
+            d = business_day_open()
+            if d:
+                self.lbl_bday_status.config(
+                    text=f"📅 اليوم التجاري الحالي: {d} ({day_name(d)})", fg=DARK)
+            else:
+                self.lbl_bday_status.config(
+                    text="📅 اليوم التجاري الحالي: لا يوم مفتوح", fg=RED)
+        except Exception:
+            pass
+
+    # ═════════════════════════════════════════════════════
+    # ★★★ إضافات (الإصدار 21): حركات الأيام السابقة + إصلاح المدموج 🗓️ ★★★
+    # ═════════════════════════════════════════════════════
+    def show_past_days(self):
+        """★ إضافة (الإصدار 21 — المطلوب 2): نافذة «حركات الأيام السابقة» —
+        للأدمن والمدير فقط، عرض قراءة فقط دون أي تعديل أو حذف: أيام
+        daily_reports من الأحدث للأقدم (التاريخ وعدد الحركات والنقد والشبكة
+        والمرتجعات والصافي ووقت الإغلاق بنظام 24)، وعند اختيار يوم تُعرض كل
+        حركات ذلك اليوم من operations (الوقت بنظام 24 والصنف والكمية والسعر
+        والإجمالي والنوع والعميل والبائع) مع صف إجماليات أسفل الجدول مطابق
+        لما في daily_reports — والربط بالآلية الموجودة (تاريخ الحركة المسجل
+        على يوم عملها)، والتاريخ والوقت الكاملان لكل حركة من مطابقة سجل
+        التقيق حيثما تُطابق (وإلا «—») حتى تُميَّز حركات كل يوم فعلي بوضوح،
+        وفيها زر «إعادة احتساب وتوزيع حركات هذا اليوم» للأدمن وحده"""
+        if not manager_level(self.role):
+            messagebox.showwarning("صلاحية", "حركات الأيام السابقة خاصة بالإدارة فقط (أدمن/مدير)")
+            return
+        win = self.register_window(tk.Toplevel(self))
+        win.title("حركات الأيام السابقة (قراءة فقط)")
+        win.configure(bg=BG)
+        # القاعدة الذهبية: شريط الأزرار السفلي يُحزم أولاً فلا يُقص أبداً
+        bar = tk.Frame(win, bg=BG)
+        bar.pack(side="bottom", fill="x", padx=20, pady=(0, 12))
+        lbl_totals = tk.Label(win, text="اختر يوماً من الجدول أعلاه لعرض حركاته",
+                              bg=BG, fg=GRAY, font=("Segoe UI", 10, "bold"),
+                              anchor="e", wraplength=940, justify="right")
+        lbl_totals.pack(side="bottom", fill="x", padx=20)
+        tk.Label(win, text="🗓️ حركات الأيام السابقة", bg=BG, fg=DARK,
+                 font=FT).pack(pady=(12, 2))
+        tk.Label(win, text="قراءة فقط — الأيام من الأرشيف (الأحدث أولاً)، واختيار أي يوم "
+                           "يعرض كل حركاته كاملة بأوقاتها الحقيقية",
+                 bg=BG, fg=GRAY, font=("Segoe UI", 10)).pack()
+        frm_days, tv_days = self.mk_tree(win,
+            ["وقت الإغلاق", "الصافي", "المرتجعات", "الشبكة", "النقد", "عدد الحركات", "التاريخ"],
+            [130, 110, 110, 105, 105, 95, 100])
+        frm_days.pack(fill="x", padx=20, pady=(6, 2))
+        tv_days.configure(height=8)
+        config_tree_stripes(tv_days)
+        frm_det, tv_det = self.mk_tree(win,
+            ["النوع", "المبيع", "السعر", "الكمية", "اسم الصنف", "العميل", "البائع",
+             "اليوم التجاري المسجل", "التاريخ والوقت الكاملان"],
+            [80, 110, 100, 80, 180, 130, 100, 120, 170])
+        frm_det.pack(fill="both", expand=True, padx=20, pady=(2, 4))
+        tv_det.tag_configure("ret", foreground=RED)
+        config_tree_stripes(tv_det)
+        state = {"sel": None}
+
+        def fill_days():
+            tv_days.delete(*tv_days.get_children())
+            with connect() as conn:
+                rows = conn.execute("SELECT * FROM daily_reports "
+                                    "ORDER BY report_date DESC").fetchall()
+            for i, r in enumerate(rows):
+                tv_days.insert("", "end", iid=r["report_date"], tags=stripe_tags(i),
+                    values=(r["closed_at"] or "—", money(r["net_total"]),
+                            money(r["total_returns"]), money(r["total_network"] or 0),
+                            money(r["total_cash"] or 0), r["ops_count"], r["report_date"]))
+            return rows
+
+        def fill_details(dd):
+            state["sel"] = dd
+            tv_det.delete(*tv_det.get_children())
+            with connect() as conn:
+                rep = conn.execute("SELECT * FROM daily_reports WHERE report_date=?",
+                                   (dd,)).fetchone()
+                rows = conn.execute("SELECT * FROM operations WHERE date=? "
+                                    "ORDER BY id", (dd,)).fetchall()
+            matched = match_op_times_from_audit()
+            for i, r in enumerate(rows):
+                ts = matched.get(r["id"])
+                tv_det.insert("", "end", tags=stripe_tags(i, r["type"] == "مرتجع"),
+                    values=(r["type"], money(r["total"]), money(r["price"]),
+                            f'{r["quantity"]:g}',
+                            r["item_name"] + ret_ref_mark(r["type"] == "مرتجع",
+                                                          r["original_op_id"]),
+                            (r["customer_name"] or ""),
+                            (r["seller_name"] or "—"), r["date"], ts or "—"))
+            if rep is not None:
+                # صف الإجماليات أسفل الجدول — مطابق لما في daily_reports حرفياً
+                lbl_totals.config(fg="#1d4ed8", text=(
+                    f"صف الإجماليات المطابق لـ daily_reports — عدد الحركات: {rep['ops_count']}"
+                    f" | النقد: {money(rep['total_cash'] or 0)}"
+                    f" | الشبكة: {money(rep['total_network'] or 0)}"
+                    f" | المرتجعات: {money(rep['total_returns'])}"
+                    f" | الصافي: {money(rep['net_total'])}"
+                    f" | وقت الإغلاق: {rep['closed_at'] or '—'} (بنظام 24)"))
+            else:
+                lbl_totals.config(fg=RED, text="لا صف لهذا اليوم في daily_reports")
+
+        def on_pick(_e=None):
+            sel = tv_days.selection()
+            if sel:
+                fill_details(sel[0])
+
+        tv_days.bind("<<TreeviewSelect>>", on_pick)
+        tv_days.bind("<Double-1>", on_pick)
+        # الأزرار: إغلاق يميناً — وزر الإصلاح للأدمن وحده يساراً ولا يظهر
+        # للمدير ولا للبائع داخل هذه النافذة أبداً
+        self.mk_btn(bar, "إغلاق", win.destroy, "#475569").pack(side="right", padx=6)
+        if self.role == ADMIN_ROLE:
+            b_fix = self.mk_btn(bar, "🛠️ إعادة احتساب وتوزيع حركات هذا اليوم",
+                                lambda: self.rebuild_selected_day_reports(
+                                    state["sel"], fill_days, fill_details),
+                                "#b45309")
+            b_fix.pack(side="left", padx=6)
+            add_tip(b_fix, "للأدمن وحده: يشتق اليوم التجاري الصحيح لكل حركة من وقتها "
+                           "بحد 05:00 وينقلها إليه ثم يعيد بناء صفوف daily_reports "
+                           "للأيام المتأثرة — إصلاح اليومين المدموجين معاً")
+        tk.Label(bar, text="اختر اليوم من الجدول أعلاه ثم اعرض حركاته",
+                 bg=BG, fg=GRAY, font=("Segoe UI", 9)).pack(side="right", padx=8)
+        fill_days()
+        place_window(win, 1100, 700, 940, 560, can_resize=True)
+
+    def rebuild_selected_day_reports(self, d, refill_days=None, refill_details=None):
+        """★ إضافة (الإصدار 21 — المطلوب 2-2): زر الأدمن وحده «إعادة احتساب
+        وتوزيع حركات هذا اليوم» — يشتق من وقت كل حركة (وقتها الحقيقي من سجل
+        التدقيق حيثما تُطابق مطابقة تامة) يومها التجاري الصحيح بحد 05:00،
+        وينقل الحركات إلى أيامها الصحيحة (تحديث تاريخها المسجل نفسه)، ثم
+        يُحدّث أو يُنشئ صفوف daily_reports لكل التواريخ المتأثرة من جدول
+        operations نفسه — وهذا هو الإصلاح المطلوب لليومين الذين دُمجا معاً.
+        اليوم التجاري المفتوح الحالي لا يُقفل بتقرير هنا أبداً (يُحتسب عند
+        إغلاقه الفعلي من تواريخ حركاته بعد النقل)، وصفوف اليوم المحدثة تحفظ
+        وقت إغلاقها الأصلي والمنشأة حديثاً بلا وقت إغلاق («—»)"""
+        if self.role != ADMIN_ROLE:
+            messagebox.showwarning("صلاحية", "إعادة الاحتساب والتوزيع خاصة بالأدمن وحده")
+            return
+        if not d:
+            messagebox.showinfo("تنبيه", "اختر يوماً من الجدول أولاً")
+            return
+        with connect() as conn:
+            day_ops = conn.execute("SELECT * FROM operations WHERE date=? "
+                                    "ORDER BY id", (d,)).fetchall()
+        trues = op_true_day_map()
+        moves = []          # [(رقم الحركة, التاريخ المسجل القديم, اليوم الصحيح)]
+        for r in day_ops:
+            _ts, true_day = trues.get(r["id"], (None, r["date"]))
+            if true_day and true_day != r["date"]:
+                moves.append((r["id"], r["date"], true_day))
+        affected = {d}
+        per_target = {}
+        for _oid, _frm, true_day in moves:
+            affected.add(true_day)
+            per_target[true_day] = per_target.get(true_day, 0) + 1
+        open_d = business_day_open()
+        preview = "\n".join(f"• {cnt} حركة ← يوم {t}"
+                            for t, cnt in sorted(per_target.items())) or "• لا شيء"
+        if not messagebox.askyesno("تأكيد إعادة الاحتساب والتوزيع",
+                f"سيُعاد اشتقاق اليوم التجاري الصحيح لكل حركة من يوم {d} "
+                f"بقاعدة الساعة 05:00:\n\n"
+                f"عدد حركات اليوم: {len(day_ops)}\n"
+                f"سيُنقل إلى أيامها الصحيحة: {len(moves)} حركة\n{preview}\n\n"
+                "ستُحدَّث أو تُنشأ صفوف daily_reports لكل الأيام المتأثرة: "
+                + "، ".join(sorted(affected)) +
+                "\nلتطابق جدول operations تماماً بعد النقل (تُنشأ إن لم توجد)، "
+                "واليوم التجاري المفتوح الحالي لا يُقفل بتقرير.\n\n"
+                "هل تريد المتابعة؟"):
+            return
+        # ١) نقل الحركات إلى أيامها الصحيحة (معاملة واحدة على التاريخ المسجل)
+        with connect() as conn:
+            for oid, _frm, true_day in moves:
+                conn.execute("UPDATE operations SET date=? WHERE id=?", (true_day, oid))
+        # ٢) إعادة احتساب صفوف كل الأيام المتأثرة من operations نفسه
+        rebuilt, created = [], []
+        with connect() as conn:
+            for dd in sorted(affected):
+                if dd == open_d:
+                    continue        # اليوم المفتوح لا يُقفل بتقرير — يُحتسب عند إغلاقه
+                n, cash, netw, rets, net = day_totals(dd)
+                has = conn.execute("SELECT 1 FROM daily_reports WHERE report_date=?",
+                                   (dd,)).fetchone()
+                if has:
+                    conn.execute("""UPDATE daily_reports SET ops_count=?,total_sales=?,
+                                    total_returns=?,net_total=?,total_cash=?,total_network=?
+                                    WHERE report_date=?""",
+                                 (n, cash + netw, rets, net, cash, netw, dd))
+                    rebuilt.append(dd)
+                else:
+                    conn.execute("""INSERT INTO daily_reports(report_date,ops_count,total_sales,
+                                    total_returns,net_total,total_cash,total_network,closed_at)
+                                    VALUES(?,?,?,?,?,?,?,NULL)""",
+                                 (dd, n, cash + netw, rets, net, cash, netw))
+                    created.append(dd)
+        audit("rebuild_reports",
+              f"يوم {d}: أُعيد توزيع {len(moves)} حركة — الأيام المتأثرة: "
+              f"{sorted(affected)} — أُعيد بناء {rebuilt or '—'} وأُنشئ {created or '—'}")
+        if refill_days:
+            try:
+                refill_days()
+            except Exception:
+                pass
+        if refill_details:
+            try:
+                refill_details(d)
+            except Exception:
+                pass
+        try:
+            self.refresh_archive()
+        except Exception:
+            pass
+        messagebox.showinfo("تم",
+            f"أُعيد توزيع {len(moves)} حركة إلى أيامها الصحيحة.\n"
+            f"عدد الأيام المتأثرة: {len(affected)}\n"
+            f"أُعيد بناء صفوف: {'، '.join(rebuilt) or '—'}\n"
+            f"أُنشئت صفوف: {'، '.join(created) or '—'}")
+
+    # ═════════════════════════════════════════════════════
+    # ★★★ إضافات (الإصدار 21): تعديل حركات اليوم التجاري الحالي ✏️ ★★★
+    # للأدمن والمدير فقط حصراً بالدور — بجانب ميزة التصحيح القائمة دون أي
+    # مساس بها أو بسلة المحذوفات (المطلوب إضافة التعديل فقط بجانبها)
+    # ═════════════════════════════════════════════════════
+    def edit_selected_op_v21(self):
+        """★ إضافة (الإصدار 21 — المطلوب 3): تعديل حركات اليوم التجاري الحالي —
+        للأدمن والمدير فقط حصراً بالدور (البائع لا يعدّل أي حركة نهائياً حتى
+        لو كان هو من سجلها — وصلاحية «تصحيح عملية» القائمة شيء منفصل بجانب
+        هذا)، وعلى حركات اليوم المفتوح فقط (حركات الأيام المغلقة لا تُعدَّل
+        إطلاقاً ولا يظهر لها أي زر تعديل في نافذة حركات الأيام السابقة)"""
+        if not manager_level(self.role):
+            messagebox.showwarning("صلاحية", "تعديل الحركات خاص بالإدارة فقط (أدمن/مدير)")
+            return
+        sel = self.tv_today.selection()
+        if not sel:
+            messagebox.showinfo("تنبيه", "اختر حركة من الجدول أولاً")
+            return
+        d = business_day_open()
+        if not d or is_closed(d):
+            messagebox.showwarning("اليوم مغلق", "التعديل على حركات اليوم التجاري المفتوح فقط")
+            return
+        op_id = int(sel[0])
+        with connect() as conn:
+            r = conn.execute("SELECT * FROM operations WHERE id=?", (op_id,)).fetchone()
+        if r is None:
+            return
+        if r["date"] != d:
+            messagebox.showwarning("اليوم مغلق",
+                "هذه الحركة ليست من اليوم التجاري الحالي — لا تُعدَّل")
+            return
+        self._edit_op_dialog_v21(r, d)
+
+    def _edit_op_dialog_v21(self, r, d):
+        """★ إضافة (الإصدار 21 — المطلوب 3): نافذة تعديل عربية RTL تعرض بيانات
+        الحركة الحالية وتسمح بتعديل: اسم الصنف والكمية والسعر والنوع
+        (نقداً/شبكة/مرتجع) واسم العميل واسم البائع — والإجمالي يُعاد احتسابه
+        تلقائيًا = الكمية × السعر ولا يُدخل يدويًا (والمرتجع يُخزَّن سالباً كما
+        تُخزَّن دائماً)، وقبل الحفظ رسالة تأكيد تعرض القيمة القديمة والجديدة
+        لكل حقل معدّل، وبعده: تحديث صف الحركة فورًا + تدقيق edit_operation
+        بالقيم القديمة والجديدة كاملة + تحديث مجاميع اليوم والعدادات فورًا،
+        ولا يُمس daily_reports للأيام السابقة إطلاقاً (تقرير اليوم الحالي
+        يتأثر تلقائيًا لأن الإغلاق يحتسب من operations)"""
+        win = self.register_window(tk.Toplevel(self))
+        win.title(f"✏️ تعديل الحركة رقم {r['id']} — يوم {d}")
+        win.configure(bg=BG)
+        # القاعدة الذهبية: شريط الأزرار السفلي يُحزم أولاً فلا يُقص أبداً
+        bar = tk.Frame(win, bg=BG)
+        bar.pack(side="bottom", fill="x", padx=18, pady=(0, 14))
+        card = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+        card.pack(fill="both", expand=True, padx=18, pady=(12, 6))
+        tk.Label(card, text=f"✏️ تعديل الحركة رقم {r['id']} — {r['item_name']}",
+                 bg=CARD, fg=DARK, font=FT).pack(pady=(10, 4))
+        tk.Label(card, text=f"البيانات الحالية: النوع {r['type']} | الكمية {r['quantity']:g} | "
+                            f"السعر {r['price']:g} | الإجمالي {r['total']:g}",
+                 bg=CARD, fg=GRAY, font=("Segoe UI", 10)).pack(pady=(0, 6))
+        grid = tk.Frame(card, bg=CARD)
+        grid.pack(fill="both", expand=True, padx=10, pady=8)
+
+        def _row(lbl_txt, widget, row_i):
+            tk.Label(grid, text=lbl_txt, bg=CARD, fg=GRAY,
+                     font=("Segoe UI", 10, "bold")).grid(
+                row=row_i, column=0, sticky="e", padx=8, pady=6)
+            widget.grid(row=row_i, column=1, sticky="w", padx=8, pady=6)
+            return widget
+
+        e_item = tk.Entry(grid, font=F, justify="right", relief="solid", bd=1, width=26)
+        e_item.insert(0, r["item_name"])
+        _row("اسم الصنف:", e_item, 0)
+        e_qty = tk.Entry(grid, font=F, justify="center", relief="solid", bd=1, width=12)
+        e_qty.insert(0, f'{r["quantity"]:g}')
+        _row("الكمية:", e_qty, 1)
+        e_price = tk.Entry(grid, font=F, justify="center", relief="solid", bd=1, width=12)
+        e_price.insert(0, f'{r["price"]:g}')
+        _row("السعر:", e_price, 2)
+        cb_type = ttk.Combobox(grid, font=F, width=10, state="readonly",
+                               values=["نقداً", "شبكة", "مرتجع"])
+        cb_type.set(r["type"])
+        _row("النوع:", cb_type, 3)
+        e_cust = tk.Entry(grid, font=F, justify="right", relief="solid", bd=1, width=26)
+        e_cust.insert(0, r["customer_name"] or "")
+        _row("اسم العميل:", e_cust, 4)
+        e_seller = tk.Entry(grid, font=F, justify="right", relief="solid", bd=1, width=26)
+        e_seller.insert(0, r["seller_name"] or "")
+        _row("اسم البائع:", e_seller, 5)
+        lbl_tot = tk.Label(grid, text="", bg=CARD, fg=DARK,
+                           font=("Segoe UI", 11, "bold"), justify="center")
+        lbl_tot.grid(row=6, column=0, columnspan=2, pady=(10, 4))
+
+        def _recalc(_e=None):
+            q, pr = to_num(e_qty.get()), to_num(e_price.get())
+            t = cb_type.get()
+            if q is None or pr is None or q <= 0 or pr < 0:
+                lbl_tot.config(text="الإجمالي (تلقائي): — أكمل الكمية والسعر أولًا", fg=RED)
+                return None
+            tot = q * pr
+            if t == "مرتجع":
+                tot = -tot
+                lbl_tot.config(text=f"الإجمالي (تلقائي) = {q:g} × {pr:g} = {tot:g} "
+                                    "(مرتجع بقيمة سالبة كما يُخزَّن دائماً)", fg=RED)
+            else:
+                lbl_tot.config(text=f"الإجمالي (تلقائي) = {q:g} × {pr:g} = {tot:g}", fg=GREEN)
+            return tot
+
+        for w in (e_qty, e_price):
+            w.bind("<KeyRelease>", _recalc)
+        cb_type.bind("<<ComboboxSelected>>", _recalc)
+        _recalc()
+
+        def do_save():
+            item = e_item.get().strip()
+            q, pr = to_num(e_qty.get()), to_num(e_price.get())
+            t = cb_type.get()
+            cust = e_cust.get().strip()
+            seller = e_seller.get().strip()
+            if not item:
+                messagebox.showwarning("تنبيه", "اكتب اسم الصنف أولاً", parent=win)
+                return
+            if q is None or q <= 0:
+                messagebox.showwarning("تنبيه", f"الكمية غير صحيحة: «{e_qty.get()}»\n"
+                                     "أدخل رقماً أكبر من صفر", parent=win)
+                return
+            if pr is None or pr < 0:
+                messagebox.showwarning("تنبيه", f"السعر غير صحيح: «{e_price.get()}»\n"
+                                     "أدخل رقماً صحيحاً", parent=win)
+                return
+            total = q * pr
+            if t == "مرتجع":
+                total = -total
+            changed = []
+            if item != r["item_name"]:
+                changed.append(("اسم الصنف", r["item_name"], item))
+            if q != (r["quantity"] or 0):
+                changed.append(("الكمية", f'{r["quantity"]:g}', f"{q:g}"))
+            if pr != (r["price"] or 0):
+                changed.append(("السعر", f'{r["price"]:g}', f"{pr:g}"))
+            if t != r["type"]:
+                changed.append(("النوع", r["type"], t))
+            if cust != (r["customer_name"] or ""):
+                changed.append(("اسم العميل", r["customer_name"] or "—", cust or "—"))
+            if seller != (r["seller_name"] or ""):
+                changed.append(("اسم البائع", r["seller_name"] or "—", seller or "—"))
+            if total != (r["total"] or 0):
+                changed.append(("الإجمالي", f'{r["total"]:g}', f"{total:g}"))
+            if not changed:
+                messagebox.showinfo("تنبيه", "لم تتغير أي قيمة — لا شيء يحتاج التعديل",
+                                    parent=win)
+                return
+            lines = "\n".join(f"• {f}: {old} ← {new}" for f, old, new in changed)
+            if not messagebox.askyesno("تأكيد التعديل",
+                    f"تعديل الحركة رقم {r['id']} (يوم {d}):\n\n{lines}\n\n"
+                    "هل تريد حفظ التعديل؟", parent=win):
+                return
+            with connect() as conn:
+                conn.execute("""UPDATE operations SET item_name=?,quantity=?,price=?,
+                                total=?,type=?,customer_name=?,seller_name=?
+                                WHERE id=?""",
+                             (item, q, pr, total, t, cust, seller, r["id"]))
+            audit("edit_operation",
+                  f"رقم {r['id']} يوم {d} — " +
+                  "؛ ".join(f"{f}: {old} ← {new}" for f, old, new in changed))
+            win.destroy()
+            self.refresh_today(); self.refresh_stats()
+            try:
+                self.lbl_status.config(text=f"✏️ تم تعديل الحركة رقم {r['id']}", fg=GREEN)
+            except Exception:
+                pass
+
+        def do_cancel():
+            win.destroy()
+
+        self.mk_btn(bar, "💾 حفظ التعديل", do_save, GREEN).pack(side="right", padx=6)
+        self.mk_btn(bar, "إلغاء", do_cancel, "#475569").pack(side="right", padx=6)
+        e_item.bind("<Return>", lambda _e: do_save())
+        place_window(win, 580, 580)
 
     # ★ إضافة (الإصدار 17 — التعديل 4): الملاحظة اللطيفة عند التشغيل قبل 05:00
     def _show_pre_dawn_note(self, d):
@@ -6250,6 +7081,13 @@ class App(tk.Tk):
         if not self.has_permission("add_ops"):
             messagebox.showwarning("صلاحية", "ليست لديك صلاحية «إضافة عمليات وفواتير»")
             return
+        # ★★★ إضافة (الإصدار 21 — المطلوب 1-3/ج — الاستثناء ب): نقطة التفتيش
+        # قبل حفظ الفاتورة (بيع أو مرتجع) مباشرة — نفس الدالة المركزية الوحيدة:
+        # يستحيل بعدها تسجيل حركة على يوم تجاري قديم
+        try:
+            self.ensure_business_day_current()
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
         # ★ إصلاح (الإصدار 18 — المشكلة 1): الحفظ على يوم العمل التجاري المفتوح
         # بتاريخه لا بتاريخ الجهاز — مطابقةً تامة لسلوك حفظ عملية جديدة save_op
         # القائم (كانت الفاتورة تُحفظ بتاريخ اليوم فتنقسم عمليات ما قبل حد
@@ -7442,6 +8280,18 @@ class App(tk.Tk):
                     self.btn_correct_op.pack(side="right", padx=6)
                 else:
                     self.btn_correct_op.pack_forget()
+        except Exception:
+            pass
+        # ★ إضافة (الإصدار 21 — المطلوب 3): زر «✏️ تعديل الحركة» يتكيف مع الدور
+        # بعد التبديل — للأدمن والمدير فقط (البائع لا يراه نهائياً)، وزر الإغلاق
+        # اليدوي نفسه يتكيف مع الدور من بوابة refresh_business_day_ui (نقطة
+        # التجمع التي تُستدعى مع كل تحديث) فلا يحتاج كتلة هنا
+        try:
+            if getattr(self, "btn_edit_op21", None) is not None:
+                if manager_level(self.role):
+                    self.btn_edit_op21.pack(side="left", padx=6)
+                else:
+                    self.btn_edit_op21.pack_forget()
         except Exception:
             pass
 
