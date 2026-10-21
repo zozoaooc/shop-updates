@@ -310,13 +310,16 @@ except Exception:
 import urllib.request   # ★ إضافة (إصدار 10): جلب التحديث — المكتبة القياسية وحدها
 import threading        # ★ إضافة (إصدار 10): فحص خلفي لا يجمّد الواجهة أبداً
 
-# ★ تعديل مصرح به (الإصدار 24 — ختم النشر): ثابت VERSION من "2.13" إلى
-# "2.14" — الرقم التسلسلي التالي لنشر حصيلة جولة المراحل غير المنشورة
-# عبر نظام التحديث القائم نفسه (الصلاحيات الدقيقة + مركز المتابعة
-# والرقابة + التقارير الإدارية + العملاء والديون والضمانات والفواتير
-# المتسلسلة وأسباب المرتجع وسقوف الخصم والموافقة على العمليات الكبيرة
-# والبيع بالدين + القائمة الجانبية بالمجموعات القابلة للطي)، بأمر المالك
-VERSION = "2.14"        # إصدار البرنامج الحالي — يُقارن برقم version.txt
+# ★ تعديل مصرح به (الإصدار 28 — ختم النشر): ثابت VERSION من "2.14" إلى
+# "2.15" — الرقم التسلسلي التالي لنشر حصيلة الجولات السبع غير المنشورة
+# عبر نظام التحديث القائم نفسه (حزمة الصندوق والرقابة المالية: كشف
+# الصندوق اليومي والمصروفات الموثقة وأعمار الديون وقائمة من أطالب به
+# اليوم والديون المتعثرة بالمركز + تبويب كشف الصندوق بحركة النقدية
+# والتسوية اليدوية + آخر سعر بيع + قفل الخمول + موعد التحصيل +
+# المصروفات الكاملة بزرها وتبويبها ضمن كشف الصندوق + عروض الأسعار
+# بترقيمها المستقل وتحويلها لفاتورة معبأة)، بأمر المالك «انشر آخر
+# التحديثات»
+VERSION = "2.15"        # إصدار البرنامج الحالي — يُقارن برقم version.txt
 UPDATE_VERSION_URL = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/version.txt"
 UPDATE_FILE_URL    = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/main.py"
 # ★ إضافة (الإصدار 15 — الجزء الثاني): ملاحظات الإصدارات (changelog) —
@@ -670,6 +673,31 @@ def set_setting(key, value):
                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
 
 # ═════════════════════════════════════════════════════════
+# ★★★ إضافة (قفل الخمول): مدة القفل في جدول الإعدادات القائم ★★★
+# مفتاح جديد idle_lock_minutes في جدول settings القائم نفسه (لا جداول
+# جديدة ولا أعمدة): يُنشأ بقيمة 5 عند أول تشغيل إذا لم يوجد، و0 = إيقاف
+# القفل، والمسموح عند الحفظ من شاشة الإعدادات عدد صحيح من 0 إلى 120
+# ═════════════════════════════════════════════════════════
+IDLE_LOCK_KEY = "idle_lock_minutes"
+
+def get_idle_lock_minutes():
+    """★ إضافة (قفل الخمول): قراءة مدة قفل الخمول بالدقائق من جدول
+    الإعدادات القائم — إن لم يوجد المفتاح (أول تشغيل) يُنشأ بقيمة 5
+    وتُرجع 5، وأي قيمة مخزنة تالفة أو خارج 0–120 تُقرأ 5 دون كتابة فوق
+    المخزن (الكتابة وحدها من شاشة الإعدادات بعد التحقق الكامل)"""
+    try:
+        v = get_setting(IDLE_LOCK_KEY)
+        if v is None:
+            set_setting(IDLE_LOCK_KEY, "5")
+            return 5
+        n = int(str(v).strip())
+        if n < 0 or n > 120:
+            return 5
+        return n
+    except Exception:
+        return 5
+
+# ═════════════════════════════════════════════════════════
 # ★★★ إضافات (الإصدار 14 — الجزء الأول): نظام يوم العمل 🌙 ★★★
 # يوم العمل = التاريخ الذي تُسجَّل عليه العمليات — يُخزَّن في settings.business_day
 # وبلا سجل مخزن تعمل الدوال كلها على تاريخ اليوم (توافق كامل مع الإصدارات السابقة)
@@ -917,6 +945,65 @@ PERMISSIONS_CATALOG = {
     "system_health_view":       "عرض فحص صحة النظام",
     "backup_monitor_view":      "عرض مراقبة النسخ الاحتياطي",
     "sell_on_credit":           "البيع بالدين (زر الدين في شاشة البيع)",
+    # ★★★ إضافة (حزمة الصندوق والرقابة المالية — المرحلة الأولى): ثلاثة
+    # مفاتيح جديدة تُضاف إلى الكتالوج حصراً (الاستثناء المصرح به الوحيد في
+    # نافذة الصلاحيات الدقيقة — تظهر فيه تلقائيًا مطفأة افتراضيًا لكل
+    # المستخدمين لأن قوائمهم المحفوظة لا تحويها، والأدمن يملكها دائمًا
+    # بدوره عبر user_has_permission) — لا تغيير في أي مفتاح قائم ولا في
+    # صيغة الحفظ ولا في قاعدة الدمج إطلاقًا
+    "cash_report_view":         "كشف الصندوق اليومي",
+    "expenses_manage":          "تسجيل المصروفات وعرضها",
+    "debt_aging_view":          "متابعة الديون وأعمارها",
+    # ★ إضافة (كشف الصندوق — التبويب السادس في «التقارير الإدارية»):
+    # مفتاح جديد وحيد يُضاف إلى الكتالوج حصراً — يظهر في نافذة
+    # «الصلاحيات الدقيقة» تلقائيًا مطفأً افتراضيًا لكل المستخدمين
+    # (قوائمهم المحفوظة لا تحويه)، والأدمن يملكه دائمًا بدوره عبر
+    # user_has_permission، ومن يُمنحه يُبنى له التبويب السادس داخل
+    # «التقارير الإدارية» (إخفاء لا تعطيل) — لا تغيير في أي مفتاح
+    # قائم ولا في صيغة الحفظ ولا في قاعدة الدمج إطلاقًا (الكتالوج
+    # صار 17 مفتاحًا: 13 الأصلية + 3 حزمة الصندوق والرقابة المالية
+    # + هذا المفتاح)
+    "cash_box_view":            "كشف الصندوق (تبويب التقارير الإدارية)",
+    # ★ إضافة (آخر سعر بيع): مفتاح جديد وحيد يُضاف إلى الكتالوج حصراً —
+    # يظهر في نافذة «الصلاحيات الدقيقة» تلقائياً مطفأً افتراضياً لكل
+    # المستخدمين (قوائمهم المحفوظة لا تحويه)، والأدمن يملكه دائمًا بدوره
+    # عبر user_has_permission، ومن يُمنحه يظهر له تلميح آخر سعر بيع تحت
+    # حقل اسم الصنف في شاشة الفاتورة وزر «استعلام آخر الأسعار» (إخفاء
+    # لا تعطيل: العنصران لا يُبنيا أصلاً لمن لا يملك)، وكل دالة بحث تفحص
+    # المفتاح داخلياً ثانياً قبل أي قراءة — لا تغيير في أي مفتاح قائم
+    # ولا في صيغة الحفظ ولا في قاعدة الدمج الإجباري إطلاقاً
+    "last_price_view":           "آخر سعر بيع (شاشة الفاتورة)",
+    # ★ إضافة (موعد التحصيل): مفتاح جديد وحيد يُضاف إلى الكتالوج حصراً —
+    # يظهر في نافذة «الصلاحيات الدقيقة» تلقائيًا مطفأً افتراضيًا لكل
+    # المستخدمين (قوائمهم المحفوظة لا تحويه)، والأدمن يملكه دائمًا بدوره
+    # عبر user_has_permission، ومن يُمنحه يظهر له زر «تعديل موعد التحصيل»
+    # في تبويب الديون والتحصيل (إخفاء لا تعطيل: الزر لا يُبنى لمن لا
+    # يملكه)، ودالة التعديل نفسها تفحص المفتاح داخلياً ثانياً قبل أي
+    # كتابة (الطبقة الثانية) — تحديد الموعد عند البيع بالدين لا يحتاج
+    # هذا المفتاح لأنه جزء من شاشة البيع بالدين (sell_on_credit) — لا
+    # تغيير في أي مفتاح قائم ولا في صيغة الحفظ ولا في قاعدة الدمج
+    # الإجباري إطلاقاً (الكتالوج صار 19 مفتاحًا)
+    "collection_date_edit":      "تعديل موعد التحصيل (ديون قائمة)",
+    # ★ إضافة (ميزة «المصروفات»): مفتاحان جديدان يُضافان إلى الكتالوج
+    # حصراً — يظهران في نافذة «الصلاحيات الدقيقة» تلقائيًا مطفأين
+    # افتراضيًا لكل المستخدمين (قوائمهم المحفوظة لا تحويهما)، والأدمن
+    # يملكهما دائمًا بدوره عبر user_has_permission؛ expense_record يبني
+    # زر «تسجيل مصروف» في الشاشة الرئيسية، وexpense_report يبني تبويب
+    # «المصروفات» داخل «التقارير الإدارية» (إخفاء لا تعطيل في الطبقة
+    # الأولى)، وكل دالة حفظ أو قراءة أو حذف تفحص مفتاحها داخليًا ثانيًا
+    # قبل أي تنفيذ (الطبقة الثانية) — لا تغيير في أي مفتاح قائم ولا في
+    # صيغة الحفظ ولا في قاعدة الدمج الإجباري إطلاقًا (الكتالوج صار
+    # 21 مفتاحًا)
+    "expense_record":            "تسجيل مصروف",
+    "expense_report":            "عرض تقرير المصروفات",
+    # ★ إضافة (عروض الأسعار): مفتاح جديد وحيد يُضاف إلى الكتالوج حصراً —
+    # يظهر في نافذة «الصلاحيات الدقيقة» تلقائيًا مطفأًا افتراضيًا لكل
+    # المستخدمين (قوائمهم المحفوظة لا تحويه)، والأدمن يملكه دائمًا بدوره
+    # عبر user_has_permission؛ يمنح إنشاء العروض وعرضها وتعديلها وتحويلها
+    # وإلغاءها معًا (مفتاح واحد كما نصت المواصفة)، وغير الأدمن يرى عروضه
+    # هو وحده حتى بعد المنح — لا تغيير في أي مفتاح قائم ولا في صيغة الحفظ
+    # ولا في قاعدة الدمج الإجباري إطلاقًا (الكتالوج صار 22 مفتاحًا)
+    "quotations_manage":         "عروض الأسعار",
 }
 
 def load_user_permissions(username):
@@ -1862,6 +1949,1260 @@ def customer_last_purchase(customer_id, name):
     except Exception:
         return None
 
+
+# ═══════════════════════════════════════════════════════════
+# ★★★ إضافات (حزمة الصندوق والرقابة المالية — المرحلة الأولى): طبقة البيانات ★★★
+# خمس ميزات محكومات بثلاثة مفاتيح صلاحيات جديدة في PERMISSIONS_CATALOG
+# حصراً (cash_report_view / expenses_manage / debt_aging_view — كلها مطفأة
+# افتراضيًا لكل المستخدمين والأدمن يملكها بدوره دائماً عبر
+# user_has_permission القائم): كشف الصندوق اليومي، المصروفات الموثقة،
+# متابعة الديون (أعمار + من أطالب به اليوم)، والديون المتعثرة في مركز
+# المتابعة — كلها قراءة صامتة من الجداول القائمة وحدها بأسمائها
+# وأعمدتها الفعلية، ويوم تجاري واحد مرجع وحيد: get_business_day()
+# بالقاعدة القائمة 05:00 حرفيًا، ولا يُنشأ هنا أي جدول غير جدول
+# expenses الجديد (CREATE TABLE IF NOT EXISTS) وعمود واحد جديد
+# promised_date على جدول الديون القائم (ALTER TABLE ADD COLUMN داخل
+# try/except يتحمل وجوده مسبقًا) — لا حذف ولا تعديل لأي جدول أو عمود قائم
+# ═══════════════════════════════════════════════════════════
+
+# تصنيفات المصروفات الجاهزة — القائمة الوحيدة المسموحة في نافذة التسجيل
+EXPENSE_CATEGORIES = ("توصيل", "مستلزمات محل", "صيانة وإصلاح", "ضيافة", "أخرى")
+
+_CASH_READY = {"done": False}   # تجهيز قاعدة الحزمة مرة واحدة عند أول استخدام
+
+def _ensure_cash_tables():
+    """★ إضافة (حزمة الصندوق والرقابة المالية): تجهيز قاعدة البيانات
+    لميزات الحزمة — جدول expenses الجديد وحده بـ CREATE TABLE IF NOT
+    EXISTS وعمود واحد جديد promised_date على جدول الديون القائم بـ ALTER
+    TABLE ADD COLUMN داخل try/except يتحمل وجوده مسبقًا؛ يستدعي
+    _ensure_stage4_tables القائمة أولاً فيضمن وجود جدول الديون قبل العمود
+    الجديد (بلا أي كلفة إضافية بعد أول نجاح لها)، ولا يُمس أي جدول أو
+    عمود قائم إطلاقًا، وبعد نجاح العمود تعود الدالة فوراً — وإن تعذر
+    العمود (جدول الديون غائب بعد) تعود المحاولة عند الاستدعاء التالي
+    دون أي أثر جانبي أبدًا"""
+    if _CASH_READY["done"]:
+        return
+    try:
+        _ensure_stage4_tables()
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+    _ok_debts6 = False
+    with connect() as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS expenses(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            amount REAL NOT NULL,
+            category TEXT,
+            note TEXT,
+            username TEXT,
+            created_at TEXT NOT NULL)""")
+        try:
+            _cols6 = [rr[1] for rr in conn.execute("PRAGMA table_info(debts)")]
+            if "promised_date" not in _cols6:
+                conn.execute("ALTER TABLE debts ADD COLUMN promised_date TEXT")
+            _ok_debts6 = True
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+    _CASH_READY["done"] = _ok_debts6
+
+def cash_report_data(d):
+    """★ إضافة (حزمة الصندوق والرقابة المالية — الميزة 1): كل أرقام كشف
+    الصندوق لليوم التجاري d — قراءة صامتة من الجداول القائمة وحدها:
+    operations (type القائم 'نقداً'/'شبكة'/'مرتجع' بقيمه المخزنة والمرتجع
+    سالب كما في day_totals القائمة حرفيًا، وpayment_kind='دين' هو ما يميز
+    صفوف البيع بالدين عن النقدي المدفوع)، وdebts/debt_payments القائمة
+    (التحصيلات اللاحقة وحدها فيها — الدفعة الأولى لا تُسجل فيها أصلًا لأن
+    الدين يُنشأ بالباقي مباشرة فتُحسب من فرق صفوف الدين عن الديون
+    المرتبطة بها)، وexpenses الجديد؛ واليوم التجاري لكل دفعة ومصروف من
+    وقته الكامل بقاعدة 05:00 نفسها (derive_business_day_from_dt القائمة)
+    — يرجع قاموس الأرقام الكامل أو None عند أي فشل"""
+    try:
+        _ensure_cash_tables()
+        d = str(d)
+        try:
+            _dnext6 = next_day(d)
+        except Exception:
+            _dnext6 = d
+        with connect() as conn:
+            rows = conn.execute("SELECT type, total, payment_kind FROM operations "
+                                "WHERE date=?", (d,)).fetchall()
+        paid_cash = sum((r["total"] or 0) for r in rows
+                        if r["type"] == "نقداً" and (r["payment_kind"] or "") != "دين")
+        paid_network = sum((r["total"] or 0) for r in rows
+                           if r["type"] == "شبكة" and (r["payment_kind"] or "") != "دين")
+        credit_sales = sum((r["total"] or 0) for r in rows
+                           if (r["payment_kind"] or "") == "دين"
+                           and r["type"] in ("نقداً", "شبكة"))
+        returns_total = -sum((r["total"] or 0) for r in rows if r["type"] == "مرتجع")
+        # الدفعات الأولى المسجلة = مجموع صفوف الوسم «دين» في يومها (بكل
+        # أنواعها — فاتورة الدين قد تحمل مرتجعات داخلها) ناقص مجموع أصول
+        # الديون المرتبطة بها (debts.sale_id القائم) — فمن دفع كامل المبلغ
+        # دفعة أولى لا يُنشأ له دين أصلًا فيظهر كامل مبلغه دفعة أولى صحيحة
+        first_payments = 0.0
+        try:
+            with connect() as conn:
+                _trows6 = conn.execute(
+                    "SELECT COALESCE(SUM(total),0) FROM operations "
+                    "WHERE date=? AND payment_kind='دين'", (d,)).fetchone()
+                _tdebts6 = conn.execute(
+                    "SELECT COALESCE(SUM(b.total_amount),0) FROM debts b "
+                    "WHERE b.sale_id IN (SELECT id FROM operations "
+                    "WHERE date=? AND payment_kind='دين')", (d,)).fetchone()
+            first_payments = max(0.0, float(_trows6[0] or 0) - float(_tdebts6[0] or 0))
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+            first_payments = 0.0
+        # التحصيلات المسجلة = دفعات debt_payments في يومها التجاري بقاعدة 05:00
+        collections = 0.0
+        try:
+            with connect() as conn:
+                _prows6 = conn.execute(
+                    "SELECT amount, created_at FROM debt_payments "
+                    "WHERE substr(created_at,1,10) BETWEEN ? AND ?",
+                    (d, _dnext6)).fetchall()
+            for r in _prows6:
+                _dt6 = parse_dt_str(r["created_at"])
+                if _dt6 is not None and derive_business_day_from_dt(_dt6) == d:
+                    collections += (r["amount"] or 0)
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+        # المصروفات بنفس القاعدة نفسها
+        expenses_total = 0.0
+        try:
+            with connect() as conn:
+                _erows6 = conn.execute(
+                    "SELECT amount, created_at FROM expenses "
+                    "WHERE substr(created_at,1,10) BETWEEN ? AND ?",
+                    (d, _dnext6)).fetchall()
+            for r in _erows6:
+                _dt6 = parse_dt_str(r["created_at"])
+                if _dt6 is not None and derive_business_day_from_dt(_dt6) == d:
+                    expenses_total += (r["amount"] or 0)
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+        cash_in = paid_cash + first_payments + collections
+        cash_out = returns_total + expenses_total
+        return {
+            "paid_cash": paid_cash, "paid_network": paid_network,
+            "credit_sales": credit_sales,
+            "total_sales": paid_cash + paid_network + credit_sales,
+            "first_payments": first_payments, "collections": collections,
+            "returns": returns_total, "expenses": expenses_total,
+            "cash_in": cash_in, "cash_out": cash_out,
+            "expected_drawer": cash_in - cash_out,
+        }
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return None
+
+def expenses_period_rows(period_label):
+    """★ إضافة (حزمة الصندوق والرقابة المالية — الميزة 2): مصروفات فترة
+    جاهزة (اليوم / آخر 7 أيام / آخر 30 يومًا) — الأيام التجارية من
+    last_business_days القائمة حصراً، وكل مصروف يُنسب ليومه التجاري بقاعدة
+    05:00 نفسها؛ يرجع (الصفوف الأحدث أولاً، الإجمالي، وصف الفترة) وقيمًا
+    فارغة آمنة عند أي فشل"""
+    try:
+        _ensure_cash_tables()
+        n = (7 if period_label == "آخر 7 أيام"
+             else (30 if period_label == "آخر 30 يومًا" else 1))
+        days = last_business_days(n)
+        _dset6 = set(days)
+        _lo6, _hi6 = min(days), max(days)
+        try:
+            _hinext6 = next_day(_hi6)
+        except Exception:
+            _hinext6 = _hi6
+        with connect() as conn:
+            rows = conn.execute(
+                "SELECT id, amount, category, note, username, created_at "
+                "FROM expenses WHERE substr(created_at,1,10) BETWEEN ? AND ? "
+                "ORDER BY id DESC", (_lo6, _hinext6)).fetchall()
+        out, total = [], 0.0
+        for r in rows:
+            _dt6 = parse_dt_str(r["created_at"])
+            if _dt6 is None or derive_business_day_from_dt(_dt6) not in _dset6:
+                continue
+            out.append(dict(r))
+            total += (r["amount"] or 0)
+        _desc6 = ("اليوم التجاري" if n == 1 else f"آخر {n} أيام تجارية")
+        return out, total, _desc6
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return [], 0.0, "—"
+
+# ═══════════════════════════════════════════════════════════
+# ★★★ إضافات (ميزة «المصروفات» الجديدة — تسجيل وتقرير): طبقة البيانات ★★★
+# مفتاحان جديدان في PERMISSIONS_CATALOG حصراً (expense_record لزر «تسجيل
+# مصروف» في الشاشة الرئيسية وexpense_report لتبويب «المصروفات» داخل
+# «التقارير الإدارية» — كلاهما مطفأ افتراضيًا لكل المستخدمين والأدمن
+# يملكهما بدوره دائمًا عبر user_has_permission القائم)، وجدول expenses
+# القائم نفسه بلا أي تعديل عليه إطلاقًا (id, amount, category, note,
+# username, created_at — يُنشأ من _ensure_cash_tables القائمة عند الإقلاع
+# وعند أول استخدام)، واليوم التجاري بقاعدة 05:00 نفسها من
+# derive_business_day_from_dt القائمة حصراً — وكل دالة هنا تبدأ بفحص
+# الصلاحية (الطبقة الثانية) وتتحمل أي فشل بتسجيله في error_log.txt مع
+# اسم الدالة والوقت ورسالة عربية دون انهيار أبدًا
+# ═══════════════════════════════════════════════════════════
+
+# أنواع المصروفات الجاهزة — القائمة المنسدلة الوحيدة في نافذة «تسجيل
+# مصروف» الجديدة (نافذة «المصروفات الموثقة» القائمة تحتفظ بتصنيفاتها
+# القائمة كما هي حرفيًا — لا مساس بسلوكها)
+EXPENSE_TYPE_CHOICES = ("نقل", "ضيافة", "كهرباء", "أجرة توصيل", "صيانة", "أخرى")
+
+def expenses_report_data(username, d_from, d_to, note_text=""):
+    """★ إضافة (ميزة «المصروفات» — التقرير): مصروفات الفترة التجارية
+    [d_from, d_to] مع بحث نصي اختياري في الملاحظة (ويشمل النوع — فالبحث
+    بكلمة «نقل» يجمع مصروفات النقل حتى لو خلت ملاحظتها من الكلمة) —
+    الطبقة الثانية أول سطر: لا بيانات بلا expense_report، وكل مصروف
+    يُنسب ليومه التجاري بقاعدة 05:00 نفسها؛ يرجع قاموس {rows, total,
+    count, highest} أو None عند فقدان الصلاحية أو أي فشل"""
+    if not user_has_permission(username, "expense_report"):
+        return None
+    try:
+        _ensure_cash_tables()
+        d_from = str(d_from)[:10]
+        d_to = str(d_to)[:10]
+        if d_from > d_to:
+            d_from, d_to = d_to, d_from      # تحمّل قلب الفترة بلا انهيار
+        try:
+            _dnext8 = next_day(d_to)
+        except Exception:
+            _dnext8 = d_to
+        with connect() as conn:
+            rows = conn.execute(
+                "SELECT id, amount, category, note, username, created_at "
+                "FROM expenses WHERE substr(created_at,1,10) BETWEEN ? AND ? "
+                "ORDER BY id DESC", (d_from, _dnext8)).fetchall()
+        _needle8 = str(note_text or "").strip().lower()
+        out = []
+        for r in rows:
+            _dt8 = parse_dt_str(r["created_at"])
+            if _dt8 is None:
+                continue
+            _bd8 = derive_business_day_from_dt(_dt8)
+            if _bd8 < d_from or _bd8 > d_to:
+                continue
+            if _needle8:
+                _hay8 = (str(r["note"] or "") + " "
+                         + str(r["category"] or "")).lower()
+                if _needle8 not in _hay8:
+                    continue
+            out.append(dict(r))
+        _total8 = sum((r["amount"] or 0) for r in out)
+        _high8 = max(((r["amount"] or 0) for r in out), default=0.0)
+        return {"rows": out, "total": _total8,
+                "count": len(out), "highest": _high8}
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return None
+
+def expense_delete_row(username, exp_id):
+    """★ إضافة (ميزة «المصروفات» — الحذف): حذف مصروف واحد نهائيًا — أدمن
+    حصريًا بلا مفتاح جديد (الأدمن يملك expense_report بدوره دائمًا)،
+    والطبقة الثانية مزدوجة: فحص الصلاحية ثم فحص أن المنفّذ أدمن فعلاً من
+    جدول users نفسه، والحذف يُسجَّل سطر تدقيق في error_log.txt باسم الدالة
+    والوقت والمبلغ والملاحظة ومن سجّله ومن حذفه؛ يرجع (True, رسالة نجاح)
+    أو (False, رسالة عربية واضحة) — دون انهيار أبدًا"""
+    if not user_has_permission(username, "expense_report"):
+        return False, "لا تملك صلاحية «عرض تقرير المصروفات» — لم يُحذف شيء"
+    _row8 = get_user_row(username)
+    if _row8 is None or _row8["role"] != ADMIN_ROLE:
+        return False, "حذف المصروفات متاح للأدمن فقط — لم يُحذف شيء"
+    try:
+        _id8 = int(exp_id)
+        with connect() as conn:
+            r = conn.execute(
+                "SELECT id, amount, category, note, username, created_at "
+                "FROM expenses WHERE id=?", (_id8,)).fetchone()
+            if r is None:
+                return False, "هذا المصروف غير موجود — ربما حُذف من قبل"
+            conn.execute("DELETE FROM expenses WHERE id=?", (_id8,))
+        try:
+            with open(ERRLOG, "a", encoding="utf-8") as f:
+                f.write("\n[" + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        + "] expense_delete_row: حذف مصروف — الرقم: "
+                        + str(r["id"])
+                        + " | المبلغ: " + money(r["amount"] or 0)
+                        + " | النوع: " + str(r["category"] or "—")
+                        + " | الملاحظة: " + str(r["note"] or "—")
+                        + " | سجّله: " + str(r["username"] or "—")
+                        + " | حذفه: " + str(username) + "\n")
+        except Exception:
+            pass
+        return True, ("حُذف المصروف نهائيًا — اختفى من التقرير ومن كشف "
+                      "الصندوق فورًا")
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return False, "تعذر حذف المصروف — سُجّل السبب في error_log.txt"
+
+# ═══════════════════════════════════════════════════════════
+# ★★★ إضافات (ميزة «عروض الأسعار»): طبقة البيانات ★★★
+# مفتاح واحد جديد في PERMISSIONS_CATALOG حصراً (quotations_manage — إنشاء
+# وعرض وتعديل وتحويل وإلغاء العروض، مطفأ افتراضيًا لكل المستخدمين والأدمن
+# يملكه بدوره دائمًا عبر user_has_permission القائم)، وجدول quotations
+# جديد وحده (CREATE TABLE IF NOT EXISTS) وعداد مستقل وحيد quote_seq في
+# جدول counters القائم (يُزرع مرة واحدة من أكبر رقم عرض موجود — بلا أي
+# مساس بعداد الفواتير invoice_seq إطلاقًا)، والأصناف تُخزن JSON داخل
+# items_json بنفس فلسفة تخزين بيانات JSON القائمة في البرنامج، وكل دالة
+# تبدأ بفحص الصلاحية (الطبقة الثانية) وترجع بهدوء عند أي فشل مع تسجيل في
+# error_log.txt — ونطاق الرؤية (غير الأدمن عروضه هو وحده) مطبَّق داخل
+# الاستعلامات نفسها، والفترات باليوم التجاري 05:00 نفسها
+# (derive_business_day_from_dt القائمة حصراً)
+# ═══════════════════════════════════════════════════════════
+
+# حالات العرض الثلاث كما نصت المواصفة — مفاتيح إنجليزية مخزنة وعناوين
+# عربية معروضة (نفس فلسفة مفاتيح الحالات القائمة في الديون)
+QUOTATION_STATUSES = {"open": "قيد الانتظار", "converted": "محول لفاتورة",
+                      "cancelled": "ملغي"}
+
+_QUOT_READY = {"done": False}   # تجهيز قاعدة العروض مرة واحدة عند أول استخدام
+
+def _ensure_quotations_table():
+    """★ إضافة (عروض الأسعار): تجهيز قاعدة العروض — جدول quotations الجديد
+    وحده بـ CREATE TABLE IF NOT EXISTS وعداد quote_seq المستقل وحده في
+    جدول counters القائم يُزرع مرة واحدة من أكبر رقم عرض موجود (لا شيء =
+    0) بنفس أسلوب زرع عداد الفواتير القائم حرفيًا؛ يستدعي
+    _ensure_stage4_tables أولاً فيضمن وجود جدول العدادات، ولا يُمس أي جدول
+    أو عداد قائم إطلاقًا، وفشل التجهيز لا يوقف البرنامج: يُسجل في
+    error_log.txt وتُكمل المحاولة عند الاستدعاء التالي دون أي أثر جانبي"""
+    if _QUOT_READY["done"]:
+        return
+    try:
+        _ensure_stage4_tables()
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+    with connect() as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS quotations(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            quote_no TEXT,
+            customer_id INTEGER,
+            customer_text TEXT,
+            items_json TEXT,
+            total REAL NOT NULL DEFAULT 0,
+            username TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at TEXT NOT NULL,
+            converted_invoice_no TEXT)""")
+        try:
+            if conn.execute("SELECT 1 FROM counters WHERE key='quote_seq'"
+                            ).fetchone() is None:
+                _mx9 = 0
+                try:
+                    _rr9 = conn.execute(
+                        "SELECT MAX(CAST(quote_no AS INTEGER)) FROM quotations "
+                        "WHERE quote_no IS NOT NULL").fetchone()
+                    _mx9 = int(_rr9[0] or 0)
+                except Exception:
+                    _mx9 = 0
+                conn.execute("INSERT INTO counters(key,value) "
+                             "VALUES('quote_seq',?)", (max(_mx9, 0),))
+            _QUOT_READY["done"] = True
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+
+def get_next_quote_number():
+    """★ إضافة (عروض الأسعار): الرقم التالي من عداد العروض المستقل الوحيد
+    — نسخة حرفية من أسلوب get_next_invoice_number القائم (معاملة واحدة
+    BEGIN IMMEDIATE فلا يتكرر الرقم أبدًا) لكن على المفتاح المستقل
+    quote_seq حصراً، فترقيم العروض مستقل تمامًا عن ترقيم الفواتير ولا
+    يمسه إطلاقًا؛ يرجع نص الرقم أو None عند أي فشل (لا يوقف الحفظ شيئًا)"""
+    _ensure_quotations_table()
+    con = sqlite3.connect(DB, timeout=15)
+    try:
+        con.execute("PRAGMA busy_timeout=15000")
+        con.execute("BEGIN IMMEDIATE")
+        rr = con.execute("SELECT value FROM counters WHERE key='quote_seq'"
+                         ).fetchone()
+        cur_v = 0
+        try:
+            cur_v = int(rr[0])
+        except Exception:
+            cur_v = 0
+        nxt = cur_v + 1
+        con.execute("INSERT INTO counters(key,value) VALUES('quote_seq',?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (nxt,))
+        con.execute("COMMIT")
+        return str(nxt)
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        try:
+            con.execute("ROLLBACK")
+        except Exception:
+            pass
+        return None
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+def _quote_items_from_json(items_json):
+    """★ إضافة (عروض الأسعار): قراءة أصناف عرض من items_json بأمان —
+    قائمة قواميس {item, qty, price} أو قائمة فارغة عند أي خلل (لا يكسر
+    عرضًا قديمًا أبدًا)"""
+    try:
+        data = json.loads(items_json or "[]")
+        if not isinstance(data, list):
+            return []
+        out = []
+        for it in data:
+            if not isinstance(it, dict):
+                continue
+            out.append({"item": str(it.get("item") or ""),
+                        "qty": float(it.get("qty") or 0),
+                        "price": float(it.get("price") or 0)})
+        return out
+    except Exception:
+        return []
+
+def quotations_list_rows(username, period_label="كل العروض",
+                         status_filter="الكل", seller_filter="كل البائعين"):
+    """★ إضافة (عروض الأسعار): قائمة العروض بالفلاتر — الطبقة الثانية أول
+    سطر: لا قراءة بلا quotations_manage؛ نطاق الرؤية داخل الاستعلام نفسه:
+    غير الأدمن يرى عروضه هو وحده (شرط username=? حتمي في الاستعلام) والأدمن
+    يرى الكل ويستطيع التصفية بالبائع؛ الفترة باليوم التجاري 05:00 نفسها
+    (كل عرض يُنسب ليومه التجاري من وقته الكامل)، والحالة بعرضها العربي أو
+    «الكل»، ويُرجع قائمة صفوف كاملة (مع العمر بالأيام التجارية وعدد
+    الأصناف) أو None عند فقدان الصلاحية أو أي فشل"""
+    if not user_has_permission(username, "quotations_manage"):
+        return None
+    try:
+        _ensure_quotations_table()
+        _urow9 = get_user_row(username)
+        _is_adm9 = (_urow9 is not None and _urow9["role"] == ADMIN_ROLE)
+        _bd9 = get_business_day()
+        # نطاق الفترة أيامًا تجارية (طقم أيام أو حدود من-إلى أو الكل)
+        _days9 = None
+        _lo9 = _hi9 = None
+        if period_label == "اليوم التجاري":
+            _days9 = {_bd9}
+        elif period_label == "أمس (تجاري)":
+            _ds9 = last_business_days(2)
+            _days9 = {_ds9[1] if len(_ds9) > 1 else _ds9[0]}
+        elif period_label == "آخر 7 أيام":
+            _days9 = set(last_business_days(7))
+        elif period_label == "هذا الشهر":
+            _lo9 = _bd9[:8] + "01"
+            _hi9 = _bd9
+        # «كل العروض» = بلا حدود
+        _st_key9 = None
+        for k9, v9 in QUOTATION_STATUSES.items():
+            if v9 == status_filter:
+                _st_key9 = k9
+                break
+        _cond9 = []
+        _prm9 = []
+        if not _is_adm9:
+            _cond9.append("username = ?")           # نطاق الرؤية داخل الاستعلام
+            _prm9.append(username)
+        elif seller_filter and seller_filter != "كل البائعين":
+            _cond9.append("username = ?")
+            _prm9.append(seller_filter)
+        if _st_key9 is not None:
+            _cond9.append("status = ?")
+            _prm9.append(_st_key9)
+        _sql9 = ("SELECT id, quote_no, customer_id, customer_text, items_json, "
+                 "total, username, status, created_at, converted_invoice_no "
+                 "FROM quotations")
+        if _cond9:
+            _sql9 += " WHERE " + " AND ".join(_cond9)
+        _sql9 += " ORDER BY id DESC"
+        with connect() as conn:
+            rows = conn.execute(_sql9, _prm9).fetchall()
+        out = []
+        _today9 = date.fromisoformat(_bd9)
+        for r in rows:
+            _dt9 = parse_dt_str(r["created_at"])
+            _qbd9 = (derive_business_day_from_dt(_dt9) if _dt9 is not None
+                     else str(r["created_at"] or "")[:10])
+            if _days9 is not None and _qbd9 not in _days9:
+                continue
+            if _lo9 is not None and not (_lo9 <= _qbd9 <= _hi9):
+                continue
+            _age9 = 0
+            try:
+                _age9 = (_today9 - date.fromisoformat(_qbd9)).days
+            except Exception:
+                _age9 = 0
+            _items9 = _quote_items_from_json(r["items_json"])
+            out.append({"id": r["id"], "quote_no": r["quote_no"],
+                        "customer_id": r["customer_id"],
+                        "customer_text": r["customer_text"] or "",
+                        "items": _items9, "count": len(_items9),
+                        "total": (r["total"] or 0), "username": r["username"],
+                        "status": r["status"],
+                        "status_ar": QUOTATION_STATUSES.get(r["status"],
+                                                            r["status"] or "—"),
+                        "created_at": r["created_at"],
+                        "converted_invoice_no": r["converted_invoice_no"],
+                        "age": max(0, _age9)})
+        return out
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return None
+
+def quotation_get_row(username, quote_id):
+    """★ إضافة (عروض الأسعار): صف عرض واحد بالمعرف — الطبقة الثانية أولًا،
+    ونطاق الرؤية نفسه داخل الاستعلام (غير الأدمن عروضه هو وحده)، ويرجع
+    قاموس الصف أو None عند فقدان الصلاحية أو الغياب"""
+    if not user_has_permission(username, "quotations_manage"):
+        return None
+    try:
+        _ensure_quotations_table()
+        _urow9 = get_user_row(username)
+        _is_adm9 = (_urow9 is not None and _urow9["role"] == ADMIN_ROLE)
+        with connect() as conn:
+            r = conn.execute(
+                "SELECT id, quote_no, customer_id, customer_text, items_json, "
+                "total, username, status, created_at, converted_invoice_no "
+                "FROM quotations WHERE id=?", (int(quote_id),)).fetchone()
+        if r is None:
+            return None
+        if not _is_adm9 and (r["username"] or "") != username:
+            return None          # ليس عرضه وغير أدمن: كأنه غير موجود
+        _items9 = _quote_items_from_json(r["items_json"])
+        return {"id": r["id"], "quote_no": r["quote_no"],
+                "customer_id": r["customer_id"],
+                "customer_text": r["customer_text"] or "",
+                "items": _items9, "count": len(_items9),
+                "total": (r["total"] or 0), "username": r["username"],
+                "status": r["status"],
+                "status_ar": QUOTATION_STATUSES.get(r["status"],
+                                                    r["status"] or "—"),
+                "created_at": r["created_at"],
+                "converted_invoice_no": r["converted_invoice_no"], "age": 0}
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return None
+
+def quotation_save_new(username, customer_id, customer_text, items):
+    """★ إضافة (عروض الأسعار): إنشاء عرض جديد مرقّمًا برقم مستقل — الطبقة
+    الثانية أولًا، وإعادة التحقق من الأصناف (صنف واحد على الأقل باسم
+    وسعر صحيحين) داخل الدالة نفسها، والترقيم من get_next_quote_number
+    المستقل وحده؛ يرجع (True, رقم العرض) أو (False, رسالة عربية)"""
+    if not user_has_permission(username, "quotations_manage"):
+        return False, "لا تملك صلاحية «عروض الأسعار» — لم يُحفظ شيء"
+    try:
+        _clean9 = []
+        for it in (items or []):
+            _nm9 = str(it.get("item") or "").strip()
+            _q9 = it.get("qty")
+            _p9 = it.get("price")
+            if not _nm9:
+                return False, "كل صنف في العرض يحتاج اسمًا — راجع الأصناف"
+            try:
+                _q9 = float(_q9)
+                _p9 = float(_p9)
+            except (TypeError, ValueError):
+                return False, f"كمية أو سعر غير صحيح للصنف «{_nm9}»"
+            if _q9 <= 0:
+                return False, f"كمية الصنف «{_nm9}» يجب أن تكون أكبر من صفر"
+            if _p9 < 0:
+                return False, f"سعر الصنف «{_nm9}» غير صحيح"
+            _clean9.append({"item": _nm9, "qty": _q9, "price": _p9})
+        if not _clean9:
+            return False, "أضف صنفًا واحدًا على الأقل إلى العرض قبل الحفظ"
+        _no9 = get_next_quote_number()
+        if _no9 is None:
+            return False, ("تعذر توليد رقم العرض — سُجّل السبب في "
+                           "error_log.txt ولم يُحفظ شيء")
+        _total9 = sum(i9["qty"] * i9["price"] for i9 in _clean9)
+        with connect() as conn:
+            conn.execute(
+                "INSERT INTO quotations(quote_no, customer_id, customer_text, "
+                "items_json, total, username, status, created_at, "
+                "converted_invoice_no) VALUES(?,?,?,?,?,?,?,?,?)",
+                (_no9, customer_id, (customer_text or "").strip() or None,
+                 json.dumps(_clean9, ensure_ascii=False), _total9, username,
+                 "open", datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                 None))
+        return True, _no9
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return False, "تعذر حفظ العرض — سُجّل السبب في error_log.txt"
+
+def quotation_update_row(username, quote_id, customer_id, customer_text, items):
+    """★ إضافة (عروض الأسعار): تعديل عرض مفتوح بنفس رقمه دون استهلاك رقم
+    جديد — الطبقة الثانية أولًا، والتحقق أن العرض موجود ومفتوح (قراءة
+    حية) وأنه عرض منشئ المستخدم نفسه لغير الأدمن، ثم إعادة تحقق الأصناف
+    نفسها؛ يرجع (True, رقم العرض) أو (False, رسالة عربية)"""
+    if not user_has_permission(username, "quotations_manage"):
+        return False, "لا تملك صلاحية «عروض الأسعار» — لم يُحفظ شيء"
+    try:
+        _old9 = quotation_get_row(username, quote_id)
+        if _old9 is None:
+            return False, "العرض غير موجود (أو ليس من عروضك) — لم يُحفظ شيء"
+        if _old9["status"] != "open":
+            return False, ("التعديل متاح للعروض المفتوحة فقط — حالة هذا "
+                           "العرض: " + _old9["status_ar"])
+        _clean9 = []
+        for it in (items or []):
+            _nm9 = str(it.get("item") or "").strip()
+            try:
+                _q9 = float(it.get("qty"))
+                _p9 = float(it.get("price"))
+            except (TypeError, ValueError):
+                return False, f"كمية أو سعر غير صحيح للصنف «{_nm9}»"
+            if not _nm9:
+                return False, "كل صنف في العرض يحتاج اسمًا — راجع الأصناف"
+            if _q9 <= 0:
+                return False, f"كمية الصنف «{_nm9}» يجب أن تكون أكبر من صفر"
+            if _p9 < 0:
+                return False, f"سعر الصنف «{_nm9}» غير صحيح"
+            _clean9.append({"item": _nm9, "qty": _q9, "price": _p9})
+        if not _clean9:
+            return False, "أضف صنفًا واحدًا على الأقل إلى العرض قبل الحفظ"
+        _total9 = sum(i9["qty"] * i9["price"] for i9 in _clean9)
+        with connect() as conn:
+            conn.execute(
+                "UPDATE quotations SET customer_id=?, customer_text=?, "
+                "items_json=?, total=? WHERE id=? AND status='open'",
+                (customer_id, (customer_text or "").strip() or None,
+                 json.dumps(_clean9, ensure_ascii=False), _total9,
+                 int(quote_id)))
+        return True, _old9["quote_no"]
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return False, "تعذر تحديث العرض — سُجّل السبب في error_log.txt"
+
+def quotation_cancel_row(username, quote_id):
+    """★ إضافة (عروض الأسعار): إلغاء عرض مفتوح — الطبقة الثانية أولًا ثم
+    قراءة حية: المفتوح وحده يُلغى (والمحول والملغي لا يتغيران أبدًا)؛
+    يرجع (True, رسالة) أو (False, رسالة عربية)"""
+    if not user_has_permission(username, "quotations_manage"):
+        return False, "لا تملك صلاحية «عروض الأسعار» — لم يُلغَ شيء"
+    try:
+        _old9 = quotation_get_row(username, quote_id)
+        if _old9 is None:
+            return False, "العرض غير موجود (أو ليس من عروضك)"
+        if _old9["status"] != "open":
+            return False, ("الإلغاء متاح للعروض المفتوحة فقط — حالة هذا "
+                           "العرض: " + _old9["status_ar"])
+        with connect() as conn:
+            conn.execute("UPDATE quotations SET status='cancelled' "
+                         "WHERE id=? AND status='open'", (int(quote_id),))
+        return True, ("أُلغي عرض السعر رقم " + str(_old9["quote_no"] or "—")
+                      + " — لا يمكن تحويله إلى فاتورة أبدًا")
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return False, "تعذر إلغاء العرض — سُجّل السبب في error_log.txt"
+
+def quotation_mark_converted(quote_id, invoice_no):
+    """★ إضافة (عروض الأسعار): تعليم عرض «محول لفاتورة» برقم الفاتورة —
+    تُستدعى حصرًا من خطاف نجاح حفظ الفاتورة داخل save_invoice بعد إتمام
+    الحفظ فعليًا (فشل الفاتورة أو إلغاؤها لا يصل إلى هنا أبدًا فيبقى
+    العرض مفتوحًا كما كان)؛ الطبقة الثانية (صاحب الجلسة الذي بدأ التحويل
+    نفسه) ثم قراءة حية: المفتوح وحده يُعلَّم، والتحديث نفسه مشروط بالحالة
+    في عبارة SQL نفسها؛ يرجع (True, رسالة) أو (False, رسالة)"""
+    if not user_has_permission(CURRENT_USER["name"], "quotations_manage"):
+        return False, "لا تملك صلاحية «عروض الأسعار» — لم يُعلَّم العرض"
+    try:
+        with connect() as conn:
+            _cur9 = conn.execute(
+                "UPDATE quotations SET status='converted', converted_invoice_no=? "
+                "WHERE id=? AND status='open'",
+                ((str(invoice_no) if invoice_no else None), int(quote_id)))
+            _n9 = getattr(_cur9, "rowcount", 0)
+        if not _n9:
+            return False, "العرض ليس مفتوحًا — لم يُعلَّم"
+        return True, "تم تعليم العرض «محول لفاتورة»"
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return False, "تعذر تعليم العرض — سُجّل السبب في error_log.txt"
+
+def quotation_build_text(row):
+    """★ إضافة (عروض الأسعار): بناء نص العرض العربي المنسق — اسم المحل
+    ورقم العرض والتاريخ والعميل والأصناف بالأسعار والإجمالي واسم البائع
+    — دالة نقية لا تلمس القرص إطلاقًا (الحفظ في quotation_save_text_file
+    وحدها والنسخ للحافظة في نافذة القائمة)"""
+    lines = []
+    _store9 = (get_setting("store_name") or "نظام المبيعات والمُرتجعات")
+    lines.append("عرض سعر" + (f" — {_store9}" if _store9 else ""))
+    lines.append("رقم العرض: " + str(row.get("quote_no") or "—"))
+    lines.append("التاريخ: " + str(row.get("created_at") or "—")[:16])
+    lines.append("العميل: " + ((row.get("customer_text") or "").strip()
+                               or "عميل غير محدد"))
+    lines.append("البائع: " + str(row.get("username") or "—"))
+    lines.append("-" * 46)
+    lines.append("الأصناف (الصنف | الكمية | سعر الوحدة | الإجمالي):")
+    _items9 = row.get("items") or []
+    if _items9:
+        for it9 in _items9:
+            lines.append("  {} | {} | {} | {}".format(
+                it9["item"], f'{it9["qty"]:g}', money(it9["price"]),
+                money(it9["qty"] * it9["price"])))
+    else:
+        lines.append("  لا أصناف")
+    lines.append("-" * 46)
+    lines.append("الإجمالي: " + money(row.get("total") or 0))
+    lines.append("-" * 46)
+    lines.append("هذا عرض سعر وليس فاتورة — الأسعار قابلة للتأكيد وقت الشراء")
+    return "\n".join(lines) + "\n"
+
+def quotation_save_text_file(username, row):
+    """★ إضافة (عروض الأسعار): حفظ نسخة العرض النصية بترميز utf-8 في
+    data_dir/reports/ (إنشاء المجلد إن لم يوجد) — تبدأ بفحص الصلاحية
+    مجددًا (الطبقة الثانية)، وترجع (True, المسار) عند النجاح أو (False,
+    رسالة عربية واضحة) عند الفشل — دون انهيار أبدًا (نفس أسلوب حفظ
+    كشف الصندوق النصي القائم حرفيًا)"""
+    if not user_has_permission(username, "quotations_manage"):
+        return False, "لا تملك صلاحية «عروض الأسعار» — لم يُحفظ شيء"
+    try:
+        _dir9 = os.path.join(data_dir(), "reports")
+        os.makedirs(_dir9, exist_ok=True)
+        _no9 = str(row.get("quote_no") or "0")
+        _path9 = os.path.join(
+            _dir9, datetime.now().strftime("quote_%Y%m%d_%H%M%S")
+            + "_" + _no9 + ".txt")
+        with open(_path9, "w", encoding="utf-8") as f:
+            f.write(quotation_build_text(row))
+        return True, _path9
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return False, "تعذر حفظ النسخة النصية — سُجّل السبب في error_log.txt"
+
+def aging_bucket(age):
+    """★ إضافة (حزمة الصندوق والرقابة المالية — الميزة 3): فئة العمر —
+    0–30 يومًا / 31–60 يومًا / أكثر من 60 يومًا"""
+    try:
+        age = int(age)
+    except Exception:
+        age = 0
+    if age <= 30:
+        return "0–30 يومًا"
+    if age <= 60:
+        return "31–60 يومًا"
+    return "أكثر من 60 يومًا"
+
+def debt_aging_rows():
+    """★ إضافة (حزمة الصندوق والرقابة المالية — الميزة 3): كل الديون
+    المفتوحة والجزئية مع عمر كل دين بالأيام من تاريخ إنشائه created_at
+    القائم محسوبًا باليوم التجاري بقاعدة 05:00 نفسها، والمتبقي، والفئة
+    العمرية، والموعد المتفق عليه promised_date — يرجع قائمة قواميس (الأقدم
+    أولًا) أو قائمة فارغة عند أي فشل"""
+    try:
+        _ensure_cash_tables()
+        _today6 = date.fromisoformat(get_business_day())
+        with connect() as conn:
+            rows = conn.execute(
+                "SELECT d.id, d.invoice_number, d.created_at, d.total_amount, "
+                "d.paid_amount, d.status, d.promised_date, d.customer_id, "
+                "c.name AS cname FROM debts d LEFT JOIN customers c "
+                "ON c.id = d.customer_id WHERE d.status IN ('مفتوح','جزئي') "
+                "ORDER BY d.id").fetchall()
+        out = []
+        for r in rows:
+            _dt6 = parse_dt_str(r["created_at"])
+            if _dt6 is None:
+                continue
+            try:
+                _age6 = (_today6 - date.fromisoformat(
+                    derive_business_day_from_dt(_dt6))).days
+            except Exception:
+                _age6 = 0
+            d6 = dict(r)
+            d6["remaining"] = max(r["total_amount"] - r["paid_amount"], 0.0)
+            d6["age"] = max(_age6, 0)
+            d6["bucket"] = aging_bucket(d6["age"])
+            out.append(d6)
+        return out
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return []
+
+def delinquent_debts_summary():
+    """★ إضافة (حزمة الصندوق والرقابة المالية — الميزة 5): ملخص الديون
+    المتعثرة — الديون المفتوحة أو الجزئية التي تجاوز عمرها 60 يومًا من
+    تاريخ إنشائها بلا سداد كامل، بعددها وإجمالي مبالغها المتبقية —
+    يرجع (العدد، الإجمالي) وقيمًا صفرية آمنة عند أي فشل"""
+    try:
+        rows = debt_aging_rows()
+        _bad6 = [r for r in rows if r["age"] > 60]
+        return len(_bad6), sum(r["remaining"] for r in _bad6)
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return 0, 0.0
+
+
+# ═══════════════════════════════════════════════════════════
+# ★★★ إضافات (موعد التحصيل): وعد العميل بالسداد عند البيع بالدين ★★★
+# طبقة مستقلة فوق كل ما هو قائم: التعديل الوحيد على قاعدة البيانات هو
+# عمود واحد جديد collection_date على جدول الديون القائم بترحيل آمن
+# (فحص PRAGMA table_info ثم ALTER TABLE مرة واحدة فقط داخل try/except)،
+# والمقارنة في كل حسابات هذه الميزة بتاريخ اليوم الميلادي العادي
+# date.today() حصراً (وليس حدود اليوم التجاري 05:00) لأن الموعد وعد
+# واقعي من العميل، والصيغة الموحدة YYYY-MM-DD — وفشل الترحيل لا يوقف
+# البرنامج أبداً بل يعمل بدون الميزة ويُسجل الخطأ في error_log.txt
+# ═══════════════════════════════════════════════════════════
+
+_COLL_READY = {"done": False}   # ترحيل عمود الموعد مرة واحدة عند أول استخدام
+
+def _ensure_collection_date_column():
+    """★ إضافة (موعد التحصيل): الترحيل الآمن لعمود collection_date TEXT
+    الجديد وحده على جدول الديون القائم — يستدعي _ensure_stage4_tables
+    القائمة أولاً فيضمن وجود جدول الديون قبل العمود الجديد، ثم يفحص
+    PRAGMA table_info(debts) فلا ينفذ ALTER TABLE إلا مرة واحدة فقط إن
+    كان العمود غائباً، وكل خطأ يُسجل في error_log.txt ولا يوقف البرنامج؛
+    بعد أول نجاح تعود الدالة فوراً بلا أي استعلام إضافي، وإن تعذر العمود
+    تعود المحاولة عند الاستدعاء التالي دون أي أثر جانبي أبدًا (والبرنامج
+    يعمل بلا الميزة: كل الإدراجات والقراءات تتحقق من العلم قبل لمسه)"""
+    if _COLL_READY["done"]:
+        return
+    try:
+        _ensure_stage4_tables()
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+    _ok_c = False
+    try:
+        with connect() as conn:
+            _cols_c = [rr[1] for rr in conn.execute("PRAGMA table_info(debts)")]
+            if "collection_date" not in _cols_c:
+                conn.execute("ALTER TABLE debts ADD COLUMN collection_date TEXT")
+        _ok_c = True
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+    _COLL_READY["done"] = _ok_c
+
+def parse_collection_date(s):
+    """★ إضافة (موعد التحصيل): تحقق صارم من صيغة تاريخ الموعد الموحدة
+    YYYY-MM-DD (يقبل الأرقام العربية ويحوّلها إنجليزية) — يرجع كائن
+    date الصالح أو None لأي خلل في الصيغة أو القيمة (مثل 2026-13-45
+    أو 2026-1-5) دون أي استثناء أبداً"""
+    try:
+        v = str(s or "").strip().translate(AR_DIGITS)
+        if not v:
+            return None
+        parts = v.split("-")
+        if len(parts) != 3:
+            return None
+        y, m, dd = parts
+        if not (len(y) == 4 and len(m) == 2 and len(dd) == 2
+                and y.isdigit() and m.isdigit() and dd.isdigit()):
+            return None
+        d = date(int(y), int(m), int(dd))
+        if d.isoformat() != v:
+            return None
+        return d
+    except Exception:
+        return None
+
+def collection_due_rows(limit=20):
+    """★ إضافة (موعد التحصيل): كل الديون المفتوحة والجزئية ذات موعد
+    تحصيل مع العميل وهاتفه والمتبقي وحالة الموعد — المقارنة بتاريخ
+    اليوم الميلادي العادي date.today() (وليس حدود اليوم التجاري 05:00)
+    لأن الموعد وعد واقعي من العميل؛ الحالة: متأخر X يوم (أحمر) /
+    مستحق اليوم / بعد Y يوم، والترتيب بالأقدم استحقاقًا أولًا (المتأخرة
+    الأشد ثم مستحقة اليوم ثم الأقرب قادمًا) — يرجع قائمة قواميس أو
+    قائمة فارغة عند أي فشل أو غياب العمود (الميزة معطلة بأمان)"""
+    try:
+        _ensure_collection_date_column()
+        if not _COLL_READY["done"]:
+            return []
+        _today_c = date.today()
+        with connect() as conn:
+            rows = conn.execute(
+                "SELECT d.id, d.invoice_number, d.customer_id, d.total_amount, "
+                "d.paid_amount, d.collection_date, c.name AS cname, c.phone "
+                "FROM debts d LEFT JOIN customers c ON c.id = d.customer_id "
+                "WHERE d.status IN ('مفتوح','جزئي') ORDER BY d.id").fetchall()
+        out = []
+        for r in rows:
+            _v = str(r["collection_date"] or "").strip()
+            if not _v:
+                continue              # دين بلا موعد — ليس من هذه القائمة
+            try:
+                _cd = date.fromisoformat(_v)
+            except Exception:
+                continue              # تاريخ مخزن غير صالح — يُتجاهل بصمت
+            _diff = (_cd - _today_c).days
+            _rem = max(r["total_amount"] - r["paid_amount"], 0.0)
+            if _diff < 0:
+                _kind, _st = "late", f"متأخر {-_diff} يوم"
+            elif _diff == 0:
+                _kind, _st = "today", "مستحق اليوم"
+            else:
+                _kind, _st = "future", f"بعد {_diff} يوم"
+            out.append({"id": r["id"], "cname": r["cname"] or "—",
+                        "phone": (str(r["phone"] or "").strip() or "—"),
+                        "invoice_number": r["invoice_number"],
+                        "remaining": _rem,
+                        "collection_date": _cd.isoformat(),
+                        "days": _diff, "kind": _kind, "status_text": _st})
+        out.sort(key=lambda x: (x["days"], x["id"]))
+        if limit:
+            out = out[:max(1, int(limit))]
+        return out
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return []
+
+def collection_due_counts():
+    """★ إضافة (موعد التحصيل): أرقام شريط تنبيه التحصيلات — (عدد الديون
+    المتأخرة، عدد المستحقة اليوم، إجمالي المتبقي لهما معًا) بقاعدة
+    اليوم الميلادي العادي نفسها — يرجع قيمًا صفرية آمنة عند أي فشل"""
+    try:
+        rows = collection_due_rows(limit=None)
+        _late_c = [r for r in rows if r["kind"] == "late"]
+        _today_c = [r for r in rows if r["kind"] == "today"]
+        _tot_c = (sum(r["remaining"] for r in _late_c)
+                  + sum(r["remaining"] for r in _today_c))
+        return len(_late_c), len(_today_c), _tot_c
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return 0, 0, 0.0
+
+
+# ═══════════════════════════════════════════════════════════
+# ★★★ إضافات (كشف الصندوق — التبويب السادس في التقارير الإدارية): ★★★
+# طبقة قراءة فقط فوق كل ما هو قائم: جامع حركات النقدية لأي فترة تجارية
+# مع تصفية البائع، وبانية نص التقرير، وحافظة النسخة النصية في
+# data_dir/reports — لا تُنشئ أي جدول ولا تعدل أي جدول قائم ولا تكتب أي
+# سجل تدقيق إطلاقًا، وكل حساب «اليوم» بقاعدة 05:00 نفسها
+# (derive_business_day_from_dt القائمة)، وتمييز النقدي من الديني بنفس
+# منطق cash_report_data القائمة حرفيًا: payment_kind='دين' هو الفيصل
+# والدفعات الأولى = مجموع صفوف الدين ناقص أصول الديون المرتبطة بها،
+# والمرتجعات المستقلة (غير الموسومة دين) وحدها خارج نقدي لأن مرتجع
+# فاتورة الدين داخلها مقفول أصلًا ضمن دفعتها الأولى فلم يخرج من الدرج
+# — وصفوف الشبكة لا تدخل الدرج أصلًا فلا تظهر، وكل دالة هنا تبدأ بفحص
+# الصلاحية مجددًا (الطبقة الثانية بعد إخفاء التبويب) وترجع None عند
+# فشلها فلا يُعرض رقم خاطئ أبدًا
+# ═══════════════════════════════════════════════════════════
+
+def cash_box_period_data(username, d_from, d_to, seller=None):
+    """★ إضافة (كشف الصندوق): كل حركات النقدية في الفترة التجارية
+    [d_from, d_to] — قراءة صامتة من الجداول القائمة وحدها: عمليات
+    operations في الفترة (عمود date هو اليوم التجاري المسجل وقت الحفظ
+    نفسه)، والدفعة الأولى لكل فاتورة دين من فرق صفوفها الموسومة «دين»
+    عن أصل الدين المرتبط بها (debts.sale_id القائم — فمن دفع كامل
+    المبلغ أولًا لا دين له فيظهر كامل مبلغه دفعة أولى)، وتحصيلات
+    debt_payments في أيامها التجارية بقاعدة 05:00 نفسها، والمرتجعات
+    المستقلة وحدها خارجًا نقديًا؛ وتصفية البائع تُطبق على فواتيره
+    وتحصيلاته ومرتجعاته وحدها — يرجع قاموس الحركات والإجماليات أو
+    None عند فقدان الصلاحية أو أي فشل"""
+    if not user_has_permission(username, "cash_box_view"):
+        return None
+    try:
+        d_from = str(d_from)[:10]
+        d_to = str(d_to)[:10]
+        if d_from > d_to:
+            d_from, d_to = d_to, d_from      # تحمّل قلب الفترة بلا انهيار
+        try:
+            _dnext7 = next_day(d_to)
+        except Exception:
+            _dnext7 = d_to
+        movements = []
+        # (1) فواتير الفترة بترتيبها الطبيعي (id) — قراءة واحدة
+        _cond7 = ["date >= ?", "date <= ?"]
+        _prm7 = [d_from, d_to]
+        if seller:
+            _cond7.append("seller_name = ?")
+            _prm7.append(seller)
+        with connect() as conn:
+            rows = conn.execute(
+                "SELECT id, date, type, total, customer_name, seller_name, "
+                "payment_kind, invoice_number, return_reason FROM operations "
+                "WHERE " + " AND ".join(_cond7) + " ORDER BY id",
+                _prm7).fetchall()
+        # التجميع: برقم الفاتورة إن وُجد، وإلا فكل عملية قديمة مجموعة
+        # قائمة بذاتها تظهر برقم فاتورة «—»
+        _groups7 = {}
+        _order7 = []
+        for r in rows:
+            _k7 = (r["invoice_number"] or "").strip()
+            if not _k7:
+                _k7 = "op:%d" % r["id"]
+            if _k7 not in _groups7:
+                _groups7[_k7] = []
+                _order7.append(_k7)
+            _groups7[_k7].append(r)
+        # أصول الديون المرتبطة بصفوف الدين في الفترة — استعلام واحد
+        # (لعزل الدفعة الأولى من كل فاتورة دين على حدة)
+        _credit_ids7 = [r["id"] for g in _groups7.values() for r in g
+                        if (r["payment_kind"] or "") == "دين"]
+        _debt_by_sale7 = {}
+        if _credit_ids7:
+            try:
+                with connect() as conn:
+                    _ph7 = ",".join("?" * len(_credit_ids7))
+                    for _dr7 in conn.execute(
+                            "SELECT sale_id, total_amount FROM debts "
+                            "WHERE sale_id IN (" + _ph7 + ")",
+                            list(_credit_ids7)):
+                        _debt_by_sale7[_dr7["sale_id"]] = \
+                            _debt_by_sale7.get(_dr7["sale_id"], 0.0) + \
+                            (_dr7["total_amount"] or 0)
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+        # أوقات الحركات الحقيقية — نفس مطابق سجل التدقيق القائم
+        # (monitor_op_times: قراءة فقط لا يُسجل شيئًا)
+        try:
+            _tmap7 = monitor_op_times()
+        except Exception:
+            _tmap7 = {}
+        # بناء الحركات لكل فاتورة: نقديها داخل، ومرتجعها المستقل خارج،
+        # ودفعة فاتورة الدين داخل، ودين بلا دفعة أولى لا يظهر أصلًا
+        for _k7 in _order7:
+            g = _groups7[_k7]
+            _ids7 = [r["id"] for r in g]
+            _times7 = sorted(_tmap7.get(i, "") for i in _ids7
+                             if _tmap7.get(i, ""))
+            _tstr7 = (_times7[0] if _times7 else (g[0]["date"] or ""))
+            _sort7 = (_tstr7 if len(_tstr7) > 10 else _tstr7 + " 00:00:00")
+            _inv7 = (g[0]["invoice_number"] or "").strip() or "—"
+            _cred7 = [r for r in g if (r["payment_kind"] or "") == "دين"]
+            _norm7 = [r for r in g if (r["payment_kind"] or "") != "دين"]
+            if _cred7:
+                _b7 = _cred7[0]
+                _rows_sum7 = sum((r["total"] or 0) for r in _cred7)
+                _debt_sum7 = sum(_debt_by_sale7.get(i, 0.0) for i in _ids7)
+                _down7 = max(0.0, _rows_sum7 - _debt_sum7)
+                if _down7 > 1e-9:
+                    movements.append({
+                        "sort": _sort7, "time": _tstr7[:16],
+                        "kind": "دفعة أولى (بيع بالدين)", "invoice": _inv7,
+                        "customer": (_b7["customer_name"] or "").strip() or "—",
+                        "seller": (_b7["seller_name"] or "").strip() or "—",
+                        "amount": _down7,
+                        "note": "إجمالي الفاتورة " + money(_rows_sum7)})
+            if _norm7:
+                _b7 = _norm7[0]
+                _cash7 = 0.0
+                _netw7 = 0.0
+                _rets7 = 0.0
+                _reasons7 = []
+                for r in _norm7:
+                    _tt7 = r["type"]
+                    if _tt7 == "مرتجع":
+                        _rets7 += -(r["total"] or 0)
+                        _rr7 = (r["return_reason"] or "").strip()
+                        if _rr7 and _rr7 not in _reasons7:
+                            _reasons7.append(_rr7)
+                    elif _tt7 == "شبكة":
+                        _netw7 += (r["total"] or 0)
+                    else:      # نقداً (وقيم البيع القديمة بعد الترقية)
+                        _cash7 += (r["total"] or 0)
+                if abs(_cash7) > 1e-9:
+                    movements.append({
+                        "sort": _sort7, "time": _tstr7[:16],
+                        "kind": "فاتورة نقدية", "invoice": _inv7,
+                        "customer": (_b7["customer_name"] or "").strip() or "—",
+                        "seller": (_b7["seller_name"] or "").strip() or "—",
+                        "amount": _cash7,
+                        "note": (f"{len(_norm7)} صنفاً" +
+                                 (f" + شبكة {money(_netw7)} خارج الدرج"
+                                  if abs(_netw7) > 1e-9 else ""))})
+                if _rets7 > 1e-9:
+                    movements.append({
+                        "sort": _sort7, "time": _tstr7[:16],
+                        "kind": "مرتجع نقدي", "invoice": _inv7,
+                        "customer": (_b7["customer_name"] or "").strip() or "—",
+                        "seller": (_b7["seller_name"] or "").strip() or "—",
+                        "amount": -_rets7,
+                        "note": ("سبب: " + "، ".join(_reasons7)[:60]
+                                 if _reasons7 else "مرتجع نقدي")})
+        # (2) تحصيلات debt_payments اللاحقة في أيامها التجارية داخل الفترة
+        # (قاعدة 05:00 نفسها) — بنفس أسلوب cash_report_data القائمة
+        try:
+            _pcond7 = ["substr(p.created_at,1,10) >= ?",
+                       "substr(p.created_at,1,10) <= ?"]
+            _pprm7 = [d_from, _dnext7]
+            if seller:
+                _pcond7.append("p.collected_by = ?")
+                _pprm7.append(seller)
+            with connect() as conn:
+                prows = conn.execute(
+                    "SELECT p.amount, p.collected_by, p.note, p.created_at, "
+                    "d.invoice_number, c.name AS cname FROM debt_payments p "
+                    "LEFT JOIN debts d ON d.id = p.debt_id "
+                    "LEFT JOIN customers c ON c.id = d.customer_id "
+                    "WHERE " + " AND ".join(_pcond7) + " ORDER BY p.id",
+                    _pprm7).fetchall()
+            for r in prows:
+                _dt7 = parse_dt_str(r["created_at"])
+                if _dt7 is None:
+                    continue
+                _bd7 = derive_business_day_from_dt(_dt7)
+                if _bd7 < d_from or _bd7 > d_to:
+                    continue
+                movements.append({
+                    "sort": str(r["created_at"])[:19],
+                    "time": str(r["created_at"])[:16],
+                    "kind": "تحصيل دين",
+                    "invoice": (r["invoice_number"] or "").strip() or "—",
+                    "customer": (r["cname"] or "").strip() or "—",
+                    "seller": (r["collected_by"] or "").strip() or "—",
+                    "amount": (r["amount"] or 0),
+                    "note": ((r["note"] or "").strip() or "تحصيل دين")[:60]})
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+        # (3) ★ إضافة (ميزة «المصروفات» — التعديل المصرح به الوحيد على
+        # كشف الصندوق القائم): مصروفات المحل المسجلة في أيامها التجارية
+        # داخل الفترة (قاعدة 05:00 نفسها) تُضاف حركات «مصروف» سالبة ضمن
+        # «نقد خارج» — ببنية الحركة نفسها وأسلوب قراءة التحصيلات القائم
+        # حرفيًا، وتصفية البائع على المصروف الذي سجّله هو بنفسه (عمود
+        # username)، فتتحدث بطاقة «صافي الحركة» وقيمة «نقد خارج» تلقائيًا
+        try:
+            _econd7 = ["substr(created_at,1,10) >= ?",
+                       "substr(created_at,1,10) <= ?"]
+            _eprm7 = [d_from, _dnext7]
+            if seller:
+                _econd7.append("username = ?")
+                _eprm7.append(seller)
+            with connect() as conn:
+                erows = conn.execute(
+                    "SELECT amount, category, note, username, created_at "
+                    "FROM expenses WHERE " + " AND ".join(_econd7)
+                    + " ORDER BY id", _eprm7).fetchall()
+            for r in erows:
+                _dt7 = parse_dt_str(r["created_at"])
+                if _dt7 is None:
+                    continue
+                _bd7 = derive_business_day_from_dt(_dt7)
+                if _bd7 < d_from or _bd7 > d_to:
+                    continue
+                _note7 = str(r["note"] or "").strip()
+                movements.append({
+                    "sort": str(r["created_at"])[:19],
+                    "time": str(r["created_at"])[:16],
+                    "kind": "مصروف",
+                    "invoice": "—",
+                    "customer": "—",
+                    "seller": (r["username"] or "").strip() or "—",
+                    "amount": -(r["amount"] or 0),
+                    "note": ((str(r["category"] or "").strip() or "مصروف")
+                             + ((" — " + _note7) if _note7 else ""))[:60]})
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+        # الترتيب الزمني والإجماليات
+        movements.sort(key=lambda m: m["sort"])
+        cash_in = sum(m["amount"] for m in movements if m["amount"] > 0)
+        cash_out = -sum(m["amount"] for m in movements if m["amount"] < 0)
+        first_pay = sum(m["amount"] for m in movements
+                        if m["kind"] == "دفعة أولى (بيع بالدين)")
+        collects = sum(m["amount"] for m in movements
+                       if m["kind"] == "تحصيل دين")
+        cash_sales = sum(m["amount"] for m in movements
+                         if m["kind"] == "فاتورة نقدية")
+        rets = -sum(m["amount"] for m in movements
+                    if m["kind"] == "مرتجع نقدي")
+        # ★ إضافة (ميزة «المصروفات»): إجمالي مصروفات الفترة نقدًا خارجًا
+        # (صفوف «مصروف» سالبة ضمن الحركات نفسها) — بند إضافي في قاموس
+        # العودة وحده، وكل الإجماليات القائمة تظل كما تُحسب حرفيًا
+        exps = -sum(m["amount"] for m in movements
+                    if m["kind"] == "مصروف")
+        return {"movements": movements,
+                "cash_in": cash_in, "cash_out": cash_out,
+                "net": cash_in - cash_out,
+                "cash_sales": cash_sales, "first_payments": first_pay,
+                "collections": collects, "returns": rets,
+                "expenses": exps}
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return None
+
+
+def cash_box_seller_options():
+    """★ إضافة (كشف الصندوق): قائمة تصفية البائع — «كل البائعين» ثم اتحاد
+    المستخدمين النشطين مع كل أسماء البائعين الواردة في العمليات (حتى تظل
+    عمليات بائع قديم أو متوقف قابلة للتصفية) — قراءة فقط، وقائمة آمنة
+    عند أي فشل"""
+    try:
+        _names7 = set(active_users_list())
+        try:
+            with connect() as conn:
+                for r in conn.execute(
+                        "SELECT DISTINCT seller_name FROM operations "
+                        "WHERE seller_name IS NOT NULL"):
+                    _s7 = (r[0] or "").strip()
+                    if _s7:
+                        _names7.add(_s7)
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+        return ["كل البائعين"] + sorted(_names7)
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return ["كل البائعين"]
+
+
+def cash_box_build_text(store, period_desc, d_from, d_to, seller_label,
+                        data, opening, actual):
+    """★ إضافة (كشف الصندوق): بناء نص التقرير المنسق — دالة نقية لا تلمس
+    القرص إطلاقًا (الحفظ في cash_box_save_text_file وحدها)"""
+    lines = []
+    lines.append("كشف الصندوق" + (f" — {store}" if store else ""))
+    lines.append(f"الفترة: من {d_from} إلى {d_to} ({period_desc})")
+    lines.append(f"البائع: {seller_label}")
+    lines.append("-" * 46)
+    lines.append(f"نقد داخل: {money(data['cash_in'])}")
+    lines.append("  منها فواتير نقدية: " + money(data["cash_sales"]))
+    lines.append("  منها دفعات أولى (بيع بالدين): "
+                 + money(data["first_payments"]))
+    lines.append("  منها تحصيلات ديون: " + money(data["collections"]))
+    lines.append(f"نقد خارج: {money(data['cash_out'])}")
+    lines.append("  منها مرتجعات نقدية: " + money(data["returns"]))
+    # ★ إضافة (ميزة «المصروفات»): تفصيل المصروفات ضمن «نقد خارج» في
+    # النص المحفوظ — يقرأ المفتاح الجديد بأمان (.get) فلا يتأثر أي
+    # مستدعٍ قديم
+    lines.append("  منها مصروفات المحل: "
+                 + money(data.get("expenses", 0)))
+    lines.append(f"صافي الحركة (داخل - خارج): {money(data['net'])}")
+    lines.append("-" * 46)
+    if opening is not None:
+        _exp7 = opening + data["net"]
+        lines.append("تسوية الدرج:")
+        lines.append(f"  رصيد افتتاحي: {money(opening)}")
+        lines.append(f"  المتوقع في الدرج: {money(_exp7)}")
+        if actual is not None:
+            _dif7 = actual - _exp7
+            if abs(_dif7) < 0.005:
+                _res7 = "مطابق تمامًا"
+            elif _dif7 > 0:
+                _res7 = "زيادة " + money(_dif7)
+            else:
+                _res7 = "عجز " + money(-_dif7)
+            lines.append(f"  النقد الفعلي في الدرج: {money(actual)}")
+            lines.append(f"  النتيجة: {_res7}")
+    lines.append("-" * 46)
+    lines.append("الحركات النقدية (الوقت | النوع | الفاتورة | العميل | "
+                 "البائع | المبلغ | ملاحظة):")
+    if data["movements"]:
+        for m in data["movements"]:
+            lines.append("  {} | {} | {} | {} | {} | {} | {}".format(
+                m["time"], m["kind"], m["invoice"], m["customer"],
+                m["seller"], money(m["amount"]), m["note"]))
+    else:
+        lines.append("  لا حركات نقدية في هذه الفترة")
+    lines.append("-" * 46)
+    lines.append("طُبع بواسطة: " + CURRENT_USER["name"] + " — "
+                 + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    return "\n".join(lines) + "\n"
+
+
+def cash_box_save_text_file(username, store, period_desc, d_from, d_to,
+                            seller_label, data, opening, actual):
+    """★ إضافة (كشف الصندوق): حفظ النسخة النصية بترميز utf-8 في
+    data_dir/reports/cash_box_YYYYMMDD_HHMMSS.txt (إنشاء المجلد إن لم
+    يوجد) — تبدأ بفحص الصلاحية مجددًا (الطبقة الثانية)، وترجع (True,
+    المسار) عند النجاح أو (False, رسالة عربية واضحة) عند الفشل — دون
+    انهيار أبدًا"""
+    if not user_has_permission(username, "cash_box_view"):
+        return False, "لا تملك صلاحية «كشف الصندوق» — لم يُحفظ شيء"
+    try:
+        _dir7 = os.path.join(data_dir(), "reports")
+        os.makedirs(_dir7, exist_ok=True)
+        _path7 = os.path.join(
+            _dir7,
+            datetime.now().strftime("cash_box_%Y%m%d_%H%M%S") + ".txt")
+        _text7 = cash_box_build_text(store, period_desc, d_from, d_to,
+                                     seller_label, data, opening, actual)
+        with open(_path7, "w", encoding="utf-8") as f:
+            f.write(_text7)
+        return True, _path7
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return False, ("تعذر حفظ النسخة النصية — سُجّل السبب في "
+                       "error_log.txt")
+
 # ═══════════════════════════════════════════════════════════
 # ★★★ إضافات (المرحلة الثالثة — التقارير الإدارية): جامعو البيانات ★★★
 # طبقة قراءة فقط فوق كل ما هو قائم: زر «التقارير الإدارية» يظهر لمن يملك
@@ -1885,7 +3226,13 @@ def admin_reports_permission(username):
     """★ إضافة (المرحلة الثالثة): هل يملك هذا المستخدم واحدة على الأقل من
     صلاحيات التقارير الخمس؟ — عبر محرك user_has_permission القائم وحده
     (الأدمن النشط يملكها كلها دائمًا بدوره)"""
-    return any(user_has_permission(username, k) for k in ADMIN_REPORT_KEYS)
+    # ★ تعديل مصرح به (ميزة «المصروفات»): يُفتح باب نافذة «التقارير
+    # الإدارية» أيضًا لمن يملك expense_report الجديد وحده — لأن تبويب
+    # «المصروفات» داخلها لا يُبنى إلا له (وإلا لما وصل إليه مدير أو بائع
+    # حتى بعد منحه المفتاح من «الصلاحيات الدقيقة»)؛ مفاتيح التقارير
+    # الخمسة كما هي وفحوصها كلها لم تُمس، وزر النافذة يظهر له بنفس شرطه
+    return (any(user_has_permission(username, k) for k in ADMIN_REPORT_KEYS)
+            or user_has_permission(username, "expense_report"))
 
 def last_business_days(n):
     """★ إضافة (المرحلة الثالثة): آخر n يومًا تجاريًا كسلاسل ISO جاهزة —
@@ -4918,6 +6265,156 @@ def archive_migrate_old_backups():
         pass
 
 
+# ═══════════════════════════════════════════════════════════
+# ★★★ إضافة (آخر سعر بيع): محرك القراءة فقط فوق البيانات القائمة ★★★
+# ميزة قراءة فقط بالكامل: لا جداول جديدة ولا تعديل على أي جدول أو دالة
+# قائمة إطلاقاً — كل شيء من جدول operations القائم بأعمدته القائمة
+# (item_name وprice سعر الوحدة وquantity وcustomer_name وseller_name
+# وinvoice_number وdate)، وأوقات البيع الحقيقية من monitor_op_times
+# القائمة قراءةً فقط (مطابقة سجل التدقيق + أحداث محطة حركات الأيام)
+# مع الرجوع للتاريخ المسجل نفسه عند غياب الوقت، وترتيب «الأحدث زمنياً» =
+# (اليوم التجاري بقاعدة 05:00 الحرفية، الوقت الحقيقي إن وُجد وإلا الأدنى،
+# رقم الحركة) — وكل دالة بحث تبدأ بفحص user_has_permission للمستخدم
+# الحالي على مفتاح last_price_view (الطبقة الثانية) وترجع فوراً دون أي
+# قراءة إن لم يملكه، وأي استثناء يُسجَّل في error_log.txt بالوقت وتتبع
+# الاستثناء (ويتضمن اسم الدالة) ويعود النداء بهدوء دون انهيار البرنامج
+# ═══════════════════════════════════════════════════════════
+
+def _lp_norm(s):
+    """★ إضافة (آخر سعر بيع): تطبيع عربي بسيط لمطابقة أسماء الأصناف —
+    إزالة التطويل والمسافات الزائدة، وتوحيد أ/إ/آ ← ا، وة ← ه، وى ← ي —
+    يُطبَّق على طرفي المطابقة (النص المكتوب واسم الصنف المخزن) ولا
+    يُكتب شيء منه في قاعدة البيانات إطلاقاً"""
+    t = str(s or "")
+    t = t.replace("ـ", "")
+    for _a in "أإآ":
+        t = t.replace(_a, "ا")
+    t = t.replace("ة", "ه")
+    t = t.replace("ى", "ي")
+    return " ".join(t.split())
+
+def _lp_sale_names():
+    """★ إضافة (آخر سعر بيع): أسماء أصناف عمليات البيع فقط (نقداً/شبكة)
+    — قراءة فقط عبر DISTINCT على جدول operations القائم (المرتجعات
+    ليست بيعاً فلا تدخل المطابقة إطلاقاً)"""
+    with connect() as conn:
+        rows = conn.execute("SELECT DISTINCT item_name FROM operations "
+                            "WHERE type IN ('نقداً','شبكة')").fetchall()
+    return [r["item_name"] for r in rows if r["item_name"]]
+
+def _lp_matching_names(text, partial=False):
+    """★ إضافة (آخر سعر بيع): أسماء الأصناف المطابقة لنص البحث بعد
+    التطبيع — تطابق تام افتراضياً، أو جزئي عند partial=True (احتواء
+    النص المطبَّع داخل الاسم المطبَّع — وهو نفس غرض LIKE %نص% لكن
+    متسامحاً مع فروق الهمزات والتاء المربوطة والمسافات الزائدة)"""
+    nq = _lp_norm(text)
+    if not nq:
+        return []
+    out = []
+    for nm in _lp_sale_names():
+        nn = _lp_norm(nm)
+        if (nq in nn) if partial else (nn == nq):
+            out.append(nm)
+    return out
+
+def _lp_fetch_rows(names, limit):
+    """★ إضافة (آخر سعر بيع): صفوف عمليات البيع للأسماء المعطاة مرتبة
+    من الأحدث زمنياً — استعلام واحد محدود بـ LIMIT على جدول operations
+    القائم بلا أي كتابة، والترتيب بالوقت الحقيقي من monitor_op_times
+    (قراءة فقط) والرجوع للتاريخ المسجل ثم رقم الحركة، والنتيجة قائمة
+    صفوف جاهزة للعرض بسعر الوحدة (price) وليس إجمالي السطر"""
+    if not names:
+        return []
+    ph = ",".join("?" * len(names))
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id, date, item_name, quantity, price, customer_name, "
+            "seller_name, invoice_number FROM operations "
+            "WHERE type IN ('نقداً','شبكة') AND item_name IN (" + ph + ") "
+            "ORDER BY id DESC LIMIT 200",
+            tuple(names)).fetchall()
+    tmap = {}
+    try:
+        tmap = monitor_op_times()
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+
+    def _ts_of(r):
+        ts = parse_dt_str(tmap.get(r["id"]) or "")
+        if ts is None:
+            dv = str(r["date"] or "")
+            if " " in dv:
+                ts = parse_dt_str(dv)
+        return ts
+
+    def _key(r):
+        ts = _ts_of(r)
+        day = (derive_business_day_from_dt(ts) if ts is not None
+               else op_business_day_from_date_val(r["date"]))
+        return (day, (ts or datetime.min), r["id"])
+
+    rows = sorted(rows, key=_key, reverse=True)[:max(1, int(limit))]
+    out = []
+    for r in rows:
+        ts = _ts_of(r)
+        out.append({
+            "op_id": r["id"],
+            "item": r["item_name"] or "—",
+            "price": float(r["price"] or 0),
+            "qty": float(r["quantity"] or 0),
+            "customer": (r["customer_name"] or "").strip(),
+            "seller": (r["seller_name"] or "").strip(),
+            "invoice": (r["invoice_number"] or "").strip(),
+            "when": (ts.strftime("%Y-%m-%d %H:%M") if ts is not None
+                     else str(r["date"] or "")[:10]),
+        })
+    return out
+
+def last_price_find(username, item_text):
+    """★ إضافة (آخر سعر بيع): أحدث عملية بيع لصنف واحد (لتلميح شاشة
+    الفاتورة) — الطبقة الثانية أولًا: من لا يملك last_price_view ترجع
+    فوراً دون أي قراءة. المسار السريع مطابقة حرفية بالفهرس القائم ثم
+    المطابقة التامة بعد التطبيع. يرجع dict: status = found/notfound/error
+    وrow عند found (سعر الوحدة لأحدث عملية زمنياً مع تاريخها وعميلها)"""
+    if not user_has_permission(username, "last_price_view"):
+        return {"status": "error", "row": None}
+    try:
+        text = str(item_text or "").strip()
+        if not text:
+            return {"status": "notfound", "row": None}
+        rows = _lp_fetch_rows([text], 1)
+        if not rows:
+            rows = _lp_fetch_rows(_lp_matching_names(text, partial=False), 1)
+        if rows:
+            return {"status": "found", "row": rows[0]}
+        return {"status": "notfound", "row": None}
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return {"status": "error", "row": None}
+
+def last_price_search(username, text, limit=5):
+    """★ إضافة (آخر سعر بيع): آخر عمليات بيع مطابقة (لنافذة استعلام
+    آخر الأسعار) — الطبقة الثانية أولًا: من لا يملك last_price_view ترجع
+    فوراً دون أي قراءة. المطابقة التامة بعد التطبيع أولًا، فإن لم توجد
+    نتائج فمطابقة جزئية مع بيان وضعها في النتيجة. يرجع dict:
+    status = found/notfound/empty/error، وmode وrows عند found"""
+    if not user_has_permission(username, "last_price_view"):
+        return {"status": "error", "mode": "", "rows": []}
+    try:
+        t = str(text or "").strip()
+        if not t:
+            return {"status": "empty", "mode": "", "rows": []}
+        rows = _lp_fetch_rows(_lp_matching_names(t, partial=False), limit)
+        if rows:
+            return {"status": "found", "mode": "مطابقة تامة", "rows": rows}
+        rows = _lp_fetch_rows(_lp_matching_names(t, partial=True), limit)
+        if rows:
+            return {"status": "found", "mode": "مطابقة جزئية", "rows": rows}
+        return {"status": "notfound", "mode": "", "rows": []}
+    except Exception as e:
+        log_error(e, sys.exc_info()[2])
+        return {"status": "error", "mode": "", "rows": []}
+
 class App(tk.Tk):
     def __init__(self, role="مدير", user_name="مدير"):
         # ★ تعديل ضروري معلن (ميزة 1): إضافة معلمة الدور لتستقبل نتيجة نافذة الدخول
@@ -4964,8 +6461,38 @@ class App(tk.Tk):
         # وأعمدتها عند الإقلاع بأمان (فشل الإنشاء لا يمنع الإقلاع أبداً
         # وتُنشأ عند أول استخدام لاحق من داخل دوالها)
         self._pending_credit = None
+        # ★ إضافة (عروض الأسعار): حالتا جلسة الميزة — سياق التحويل المعلق
+        # (يعيش حتى نجاح حفظ الفاتورة فعليًا فلا يُعلَّم العرض إلا بعده)
+        # وسجل دوال تحديث نوافذ قائمة العروض المفتوحة
+        self._pending_quote = None
+        self._quot_refresh_cbs = []
         try:
             _ensure_stage4_tables()
+        except Exception:
+            pass
+        # ★★★ إضافة (حزمة الصندوق والرقابة المالية): تجهيز قاعدة الحزمة عند
+        # الإقلاع بأمان — جدول expenses الجديد وعمود promised_date وحدهما
+        # (لا استعلام ثقيل عند الإقلاع أبدًا)، وفشل التجهيز لا يمنع
+        # الإقلاع أبداً وتُكمل المحاولة عند أول استخدام لاحق من دوالها
+        try:
+            _ensure_cash_tables()
+        except Exception:
+            pass
+        # ★★★ إضافة (موعد التحصيل): ترحيل عمود collection_date عند الإقلاع
+        # بأمان — التعديل الوحيد على قاعدة البيانات (عمود واحد جديد على
+        # جدول الديون القائم بفحص PRAGMA ثم ALTER TABLE مرة واحدة)، وفشل
+        # الترحيل لا يمنع الإقلاع أبداً: يعمل البرنامج بدون الميزة ويُسجل
+        # الخطأ في error_log.txt وتُكمل المحاولة عند أول استخدام لاحق
+        try:
+            _ensure_collection_date_column()
+        except Exception:
+            pass
+        # ★★★ إضافة (عروض الأسعار): تجهيز قاعدة العروض عند الإقلاع بأمان —
+        # جدول quotations الجديد وعداد quote_seq المستقل وحدهما (لا مساس
+        # بعداد الفواتير إطلاقًا)، وفشل التجهيز لا يمنع الإقلاع أبداً:
+        # يُسجل الخطأ وتُكمل المحاولة عند أول استخدام لاحق من دوالها
+        try:
+            _ensure_quotations_table()
         except Exception:
             pass
         # ★ تعديل مصرح به (الإصدار 19 — القسم 1 — البند ب): ملاحظة بدء
@@ -4985,6 +6512,13 @@ class App(tk.Tk):
         self.update_available_version = None   # لا تحديث مؤكد عند الإقلاع
         self.update_bar = None                 # لا شريط إشعار عند الإقلاع
         self.update_bar_dismissed = False      # لم يُخفِ المدير شيئاً بعد
+        # ★★★ إضافة (موعد التحصيل): مراجع شريط تنبيه التحصيلات أعلى الشاشة
+        # الرئيسية — لا شريط عند الإقلاع حتى يُبنى بعد الدخول لمن يملك
+        # collections_list وتوجد متأخرة أو مستحقة اليوم فعلاً (يُبنى/يُخفى
+        # من _refresh_collections_alert_bar وحدها)، والكاش يمنع إعادة البناء
+        # ما لم تتغير الأرقام فلا وميض ولا كلفة عند كل تنقل
+        self._coll_alert_bar = None
+        self._coll_alert_cache = None
         # ★ إضافة (إصدار 8 — الميزة 5): مزامنة الجلسة — النافذة الرئيسية تمثل
         # المستخدم الحالي (نفس القيمة التي يضبطها تسجيل الدخول فلا سلوك جديد)
         CURRENT_USER["name"] = user_name
@@ -5151,6 +6685,24 @@ class App(tk.Tk):
         if manager_level(self.role):
             self.after(700, self._alert_scan)
 
+        # ★★★ إضافة (قفل الخمول): حماية الجلسة عند ترك الجهاز مفتوحًا — عدّاد
+        # النشاط يُربط على bind_all (كل حدث لوحة مفاتيح أو أزرار أو حركة
+        # مؤشر أو عجلة فأرة يحدّث طابع آخر نشاط فقط — متغير بسيط بلا أي عمل
+        # ثقيل) وبإضافة add='+' فلا تُكسر أي ربطة قائمة، والفحص كل ثانية عبر
+        # after متجددة واحدة لا تتراكم نداءاتها؛ لا قفل قبل تسجيل الدخول
+        # إطلاقًا: التطبيق نفسه لا يوجد إلا بعد نجاح شاشة الدخول، وتكون
+        # نافذته الرئيسية مخفية (withdrawn) أثناء شاشة الدخول بتبديل
+        # المستخدم أو القفل اليدوي القائم فلا يعمل القفل حينها (انظر
+        # _idle_lock_tick)
+        self._idle_last_activity = time.monotonic()
+        self._idle_lock_win = None
+        self._idle_lock_minutes_cache = None
+        self._idle_cache_tick = 0
+        for _seq in ("<Any-KeyPress>", "<Any-ButtonPress>", "<Motion>",
+                     "<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.bind_all(_seq, self._idle_on_activity, add="+")
+        self.after(1000, self._idle_lock_tick)
+
         # ★ ملاحظات بدء التشغيل (ترقية قاعدة / حجر صحي) تُعرض مرة واحدة
         if NOTES:
             messagebox.showinfo("ملاحظات بدء التشغيل", "\n\n".join(NOTES))
@@ -5247,12 +6799,25 @@ class App(tk.Tk):
     # و«التحديث» لا يظهر إلا بتوفر إصدار أحدث فعليًا (القرار القائم نفسه)،
     # وترتيب كل مجموعة هو نفس الترتيب النسبي الحالي لأزرارها في الشريط
     NAV_ACCORDION_GROUPS = [
-        ("المبيعات والمرتجعات", ["new", "invoice", "today"]),
-        ("العملاء والديون", ["customers_window"]),
+        # ★ إضافة (عروض الأسعار): زر «عروض الأسعار» انضم لمجموعة
+        # «المبيعات والمرتجعات» بعد زر الفاتورة — كلمة واحدة أُضيفت
+        # للقائمة ولم يتغير أي شيء آخر في التنظيم
+        ("المبيعات والمرتجعات", ["new", "invoice", "quotations", "today"]),
+        # ★ إضافة (حزمة الصندوق والرقابة المالية): زر «متابعة الديون» انضم
+        # لمجموعة «العملاء والديون» بعد زر النافذة — كلمة واحدة أُضيفت
+        # للقائمة ولم يتغير أي شيء آخر في التنظيم
+        ("العملاء والديون", ["customers_window", "debt_aging"]),
         ("المتابعة والتقارير", ["monitor_center", "admin_reports", "archive",
                                 "search", "dash", "sellers", "past_days"]),
         ("الإدارة والأمان", ["fine_perms", "users", "audit", "print"]),
-        ("النظام", ["backups", "update"]),
+        # ★ إضافة (حزمة الصندوق والرقابة المالية): زرا «كشف الصندوق»
+        # و«المصروفات» انضما لمجموعة «النظام» قبل النسخ والتحديث —
+        # كلمتان أُضيفتا للقائمة ولم يتغير أي شيء آخر في التنظيم
+        # ★ إضافة (ميزة «المصروفات»): زر «تسجيل مصروف» انضم لمجموعة
+        # «النظام» بعد زر «المصروفات» — كلمة واحدة أُضيفت للقائمة ولم
+        # يتغير أي شيء آخر في التنظيم
+        ("النظام", ["cash_report", "expenses", "expense_add", "backups",
+                    "update"]),
     ]
 
     # ---------- الشريط الجانبي ----------
@@ -5521,6 +7086,105 @@ class App(tk.Tk):
             add_tip(b_cust4, "نافذة واحدة بخمسة تبويبات: العملاء، الديون والتحصيل، "
                              "الضمانات، العملاء غير النشطين، أسباب المرتجع — لمن مُنح "
                              "واحدة على الأقل من صلاحياتها الخمس")
+
+        # ★★★ إضافة (حزمة الصندوق والرقابة المالية — الميزة 3): زر «متابعة
+        # الديون» في مجموعة «العملاء والديون» بعد زر النافذة — لا يُنشأ إلا
+        # إذا ملك مستخدم هذه الجلسة debt_aging_view عبر user_has_permission
+        # القائم (أو أدمن بالدور)، والنافذة تفحصها مرة ثانية عند الفتح
+        # (دفاع مزدوج)، وهو خارج NAV_PERMS وSIDEBAR_GROUPS كليًا، وتغيّر
+        # ظهوره مع تبديل المستخدم يديره rebuild_ui_for_current_user بنفس
+        # منطق إخوته الشرطيين
+        if (self.role == ADMIN_ROLE
+                or user_has_permission(self.user_name, "debt_aging_view")):
+            b_dag6 = tk.Button(acc_body.get("debt_aging", nav), text="⏳  متابعة الديون", font=FB, bd=0,
+                               cursor="hand2", anchor="e", bg=SIDEBAR, fg="#cbd5e1",
+                               activebackground=ACCENT, activeforeground="white",
+                               padx=18, pady=11, highlightthickness=0,
+                               command=self.show_debt_aging)
+            b_dag6.pack(fill="x", padx=10, pady=3)
+            self.nav_buttons["debt_aging"] = b_dag6
+            add_tip(b_dag6, "أعمار الديون بالفئات الملونة + قائمة من أطالب به "
+                            "اليوم مع تحديد الموعد والتحصيل — لمن مُنح صلاحيتها")
+
+        # ★★★ إضافة (حزمة الصندوق والرقابة المالية — الميزة 1): زر «كشف
+        # الصندوق» في مجموعة «النظام» — لا يُنشأ إلا إذا ملك مستخدم هذه
+        # الجلسة cash_report_view عبر user_has_permission القائم (أو أدمن
+        # بالدور)، والنافذة تفحصها مرة ثانية عند الفتح (دفاع مزدوج)، وهو
+        # خارج NAV_PERMS وSIDEBAR_GROUPS كليًا، وتغيّر ظهوره مع تبديل
+        # المستخدم يديره rebuild_ui_for_current_user بنفس منطق إخوته
+        if (self.role == ADMIN_ROLE
+                or user_has_permission(self.user_name, "cash_report_view")):
+            b_cash6 = tk.Button(acc_body.get("cash_report", nav), text="💵  كشف الصندوق", font=FB, bd=0,
+                                cursor="hand2", anchor="e", bg=SIDEBAR, fg="#cbd5e1",
+                                activebackground=ACCENT, activeforeground="white",
+                                padx=18, pady=11, highlightthickness=0,
+                                command=self.show_cash_report)
+            b_cash6.pack(fill="x", padx=10, pady=3)
+            self.nav_buttons["cash_report"] = b_cash6
+            add_tip(b_cash6, "أرقام اليوم التجاري: المبيعات والدفعات الأولى "
+                             "والتحصيلات والمرتجعات والمصروفات والنقدية المتوقعة "
+                             "في الدرج — لمن مُنح صلاحيتها")
+
+        # ★★★ إضافة (حزمة الصندوق والرقابة المالية — الميزة 2): زر
+        # «المصروفات» في مجموعة «النظام» — لا يُنشأ إلا إذا ملك مستخدم هذه
+        # الجلسة expenses_manage عبر user_has_permission القائم (أو أدمن
+        # بالدور)، والنافذة تفحصها مرة ثانية عند الفتح (دفاع مزدوج)، وهو
+        # خارج NAV_PERMS وSIDEBAR_GROUPS كليًا، وتغيّر ظهوره مع تبديل
+        # المستخدم يديره rebuild_ui_for_current_user بنفس منطق إخوته
+        if (self.role == ADMIN_ROLE
+                or user_has_permission(self.user_name, "expenses_manage")):
+            b_exp6 = tk.Button(acc_body.get("expenses", nav), text="💸  المصروفات", font=FB, bd=0,
+                               cursor="hand2", anchor="e", bg=SIDEBAR, fg="#cbd5e1",
+                               activebackground=ACCENT, activeforeground="white",
+                               padx=18, pady=11, highlightthickness=0,
+                               command=self.show_expenses_window)
+            b_exp6.pack(fill="x", padx=10, pady=3)
+            self.nav_buttons["expenses"] = b_exp6
+            add_tip(b_exp6, "تسجيل مصروفات المحل الموثقة بتصنيفات جاهزة "
+                            "وعرضها بفترات — لمن مُنح صلاحيتها")
+
+        # ★★★ إضافة (ميزة «المصروفات»): زر «تسجيل مصروف» في مجموعة
+        # «النظام» بعد زر «المصروفات» — لا يُنشأ إلا إذا ملك مستخدم هذه
+        # الجلسة المفتاح الجديد expense_record عبر user_has_permission
+        # القائم (أو أدمن بالدور)، والنافذة تفحص الصلاحية مرة ثانية عند
+        # الفتح وثالثة داخل الحفظ نفسه (دفاع متعدد الطبقات)، وهو خارج
+        # NAV_PERMS وSIDEBAR_GROUPS كليًا، وتغيّر ظهوره مع تبديل المستخدم
+        # يديره rebuild_ui_for_current_user بنفس منطق إخوته الشرطيين
+        if (self.role == ADMIN_ROLE
+                or user_has_permission(self.user_name, "expense_record")):
+            b_exa8 = tk.Button(acc_body.get("expense_add", nav), text="📝  تسجيل مصروف", font=FB, bd=0,
+                               cursor="hand2", anchor="e", bg=SIDEBAR, fg="#cbd5e1",
+                               activebackground=ACCENT, activeforeground="white",
+                               padx=18, pady=11, highlightthickness=0,
+                               command=self.open_expense_record_dialog)
+            b_exa8.pack(fill="x", padx=10, pady=3)
+            self.nav_buttons["expense_add"] = b_exa8
+            add_tip(b_exa8, "تسجيل مصروف نقدي مدفوع من الدرج مباشرة (نقل / "
+                            "ضيافة / كهرباء / أجرة توصيل / صيانة / أخرى) — "
+                            "يُخصم تلقائيًا في كشف الصندوق ضمن «نقد خارج» — "
+                            "لمن مُنح صلاحيتها")
+
+        # ★★★ إضافة (عروض الأسعار): زر «عروض الأسعار» في مجموعة
+        # «المبيعات والمرتجعات» بعد زر الفاتورة — لا يُنشأ إلا إذا ملك
+        # مستخدم هذه الجلسة المفتاح الجديد quotations_manage عبر
+        # user_has_permission القائم (أو أدمن بالدور)، والنوافذ تفحص
+        # الصلاحية مرة ثانية عند الفتح وكل دالة تنفيذ تفحصها داخليًا
+        # (دفاع متعدد الطبقات)، وهو خارج NAV_PERMS وSIDEBAR_GROUPS كليًا،
+        # وتغيّر ظهوره مع تبديل المستخدم يديره rebuild_ui_for_current_user
+        # بنفس منطق إخوته الشرطيين
+        if (self.role == ADMIN_ROLE
+                or user_has_permission(self.user_name, "quotations_manage")):
+            b_quot9 = tk.Button(acc_body.get("quotations", nav), text="🧾  عروض الأسعار", font=FB, bd=0,
+                                cursor="hand2", anchor="e", bg=SIDEBAR, fg="#cbd5e1",
+                                activebackground=ACCENT, activeforeground="white",
+                                padx=18, pady=11, highlightthickness=0,
+                                command=self.show_quotations_window)
+            b_quot9.pack(fill="x", padx=10, pady=3)
+            self.nav_buttons["quotations"] = b_quot9
+            add_tip(b_quot9, "تحضير عروض الأسعار للعملاء: تجميعة أصناف "
+                             "بأسعارها برقم عرض مستقل، ونسخة نصية للعميل، "
+                             "وتحويل العرض المقبول إلى فاتورة بضغطة واحدة — "
+                             "لمن مُنح صلاحيتها")
 
         # ★ إضافة (إصدار 7 — الطبقة 4): زر النسخ والاستعادة — للمدير فقط،
         # بنفس نمط أزرار الشريط الجانبي، ويُضاف لقائمة أزرار المدير كي يُخفى
@@ -5913,6 +7577,13 @@ class App(tk.Tk):
         # ★ إضافة (الإصدار 14 — الجزء الأول): تحديث سطر يوم العمل وأزراره
         # مع كل تحديث للشريط العلوي (نقطة تجميع واحدة تُستدعى مع كل تنقل)
         self.refresh_business_day_ui()
+        # ★ إضافة (موعد التحصيل): مزامنة شريط تنبيه التحصيلات مع كل تحديث
+        # للشريط العلوي — نقطة تجميع تُستدعى مع كل تنقل وبعد كل حفظ، سطر
+        # محمي واحد لا يغيّر أي سلوك قائم (الكاش يمنع أي إعادة بناء بلازم)
+        try:
+            self._refresh_collections_alert_bar()
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
 
     def show_page(self, key):
         for k, b in self.nav_buttons.items():
@@ -6351,17 +8022,43 @@ class App(tk.Tk):
                 _remain4 = total - _down4
                 if _remain4 > 1e-9:
                     _ensure_stage4_tables()
+                    # ★★★ إضافة (موعد التحصيل): الترحيل الآمن أولًا — إن نجح
+                    # أُدرج موعد التحصيل مع الدين في العمود الجديد، وإن فشل
+                    # الترحيل يُدرج الدين بالعبارة القديمة نفسها حرفيًا بلا
+                    # الموعد (البرنامج يعمل بدون الميزة ولا يتوقف شيء)
+                    try:
+                        _ensure_collection_date_column()
+                    except Exception as e:
+                        log_error(e, sys.exc_info()[2])
+                    _cdate_ins4 = (str(_credit4.get("collection_date"))
+                                   if (_COLL_READY["done"]
+                                       and _credit4.get("collection_date"))
+                                   else None)
                     with connect() as conn:
-                        conn.execute(
-                            "INSERT INTO debts(customer_id, invoice_number, sale_id, "
-                            "total_amount, paid_amount, status, created_at) "
-                            "VALUES(?,?,?,?,?,?,?)",
-                            (_credit4["customer_id"], _inv4, _nid4, _remain4, 0.0,
-                             "مفتوح", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                        if _COLL_READY["done"]:
+                            conn.execute(
+                                "INSERT INTO debts(customer_id, invoice_number, "
+                                "sale_id, total_amount, paid_amount, status, "
+                                "created_at, collection_date) VALUES(?,?,?,?,?,?,?,?)",
+                                (_credit4["customer_id"], _inv4, _nid4, _remain4,
+                                 0.0, "مفتوح",
+                                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                 _cdate_ins4))
+                        else:
+                            # عبارة الإدراج القديمة نفسها حرفيًا (بلا الموعد)
+                            conn.execute(
+                                "INSERT INTO debts(customer_id, invoice_number, sale_id, "
+                                "total_amount, paid_amount, status, created_at) "
+                                "VALUES(?,?,?,?,?,?,?)",
+                                (_credit4["customer_id"], _inv4, _nid4, _remain4, 0.0,
+                                 "مفتوح", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
                 audit("credit_sale_recorded",
                       f"فاتورة رقم {_inv4 or '—'} | العميل: {_credit4['customer_name']} | "
                       f"الإجمالي: {money(total)} | الدفعة الأولى: {money(_down4)} | "
-                      f"الدين المسجل: {money(max(_remain4, 0.0))}")
+                      f"الدين المسجل: {money(max(_remain4, 0.0))}"
+                      # ★ إضافة (موعد التحصيل): الموعد إن وُجد في سطر التدقيق
+                      + (f" | موعد التحصيل: {_credit4['collection_date']}"
+                         if _credit4.get("collection_date") else ""))
             except Exception as e:
                 log_error(e, sys.exc_info()[2])
                 messagebox.showwarning("بيع بالدين",
@@ -9276,6 +10973,22 @@ class App(tk.Tk):
         else:
             self.b_credit_inv = None
 
+        # ★ إضافة (آخر سعر بيع): زر «استعلام آخر الأسعار» في شريط
+        # إجراءات الفاتورة — لا يُبنى إلا لمن يملك last_price_view
+        # (والأدمن دائماً)، ويُدار ظهوره وإخفاؤه مع تبديل المستخدم من
+        # rebuild_ui_for_current_user (إخفاء كلي لا تعطيل) بنفس نمط
+        # زر «بيع بالدين» أعلاه حرفياً
+        self._invbar_lastprice_host = bar
+        self.b_inv_lastprice = None
+        if user_has_permission(self.user_name, "last_price_view"):
+            b_lp4 = self.mk_btn(bar, "🔍 استعلام آخر الأسعار",
+                                self.show_last_prices_window, ACCENT)
+            b_lp4.pack(side="right", padx=6, before=b_inv_rm)
+            self.b_inv_lastprice = b_lp4
+            add_tip(b_lp4, "نافذة استعلام صغيرة: آخر 5 عمليات بيع مطابقة "
+                           "لاسم الصنف (تاريخها وسعر وحدتها وكميتها والعميل "
+                           "والبائع ورقم الفاتورة) — لتوحيد التسعير بين البائعين")
+
         form = tk.Frame(p, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
         form.pack(fill="x", padx=25, pady=8)
 
@@ -9293,6 +11006,19 @@ class App(tk.Tk):
         i_i = frow("اسم الصنف:")
         self.cb_inv_item = ttk.Combobox(i_i, font=F, width=30)
         self.cb_inv_item.pack(side="right", ipady=4)
+
+        # ★ إضافة (آخر سعر بيع): مضيف سطر التلميح تحت حقل اسم الصنف —
+        # إطار فارغ بارتفاع صفري لمن لا يملك last_price_view (طبقة
+        # الإخفاء: سطر التلميح لا يُبنى أصلاً له)، ويُبنى داخله سطر
+        # التلميح لمن يملكه — وموقعه هنا يضمن ظهوره تحت الحقل مباشرة
+        # قبل صف الكمية، ويُدار بناؤه وهدمه مع تبديل المستخدم من
+        # rebuild_ui_for_current_user بنفس منطق زر «بيع بالدين»
+        self._inv_lp_hint_host = tk.Frame(form, bg=CARD)
+        self._inv_lp_hint_host.pack(fill="x", padx=22, pady=0)
+        self.lbl_inv_last_price = None
+        self._lp_last_query = None
+        if user_has_permission(self.user_name, "last_price_view"):
+            self._lp_build_hint_label()
 
         i_q = frow("الكمية:")
         self.e_inv_qty = tk.Entry(i_q, font=F, justify="center", relief="solid", bd=1, width=30)
@@ -9430,6 +11156,17 @@ class App(tk.Tk):
         for w in (self.e_inv_qty, self.e_inv_price):
             w.bind("<Return>", lambda e: self.add_to_cart())
         self.cb_inv_item.bind("<Return>", lambda e: self.add_to_cart())
+        # ★ إضافة (آخر سعر بيع): روابط تحديث تلميح آخر سعر — البحث عند
+        # خروج المؤشر من حقل اسم الصنف أو ضغط Enter (بعد معالج الإضافة
+        # القائم نفسه بترتيب التسجيل: إن أُضيف الصنف للسلة صار الحقل
+        # فارغاً فيخفي التلميح) أو اختيار صنف من القائمة فقط، ولا بحث
+        # مع كل حرف إطلاقاً: الكتابة تخفي التلميح القديم فور تغيّر
+        # الاسم فقط (بلا أي استعلام)
+        self.cb_inv_item.bind("<FocusOut>", lambda e: self._lp_hint_update())
+        self.cb_inv_item.bind("<Return>", lambda e: self._lp_hint_update(), add="+")
+        self.cb_inv_item.bind("<<ComboboxSelected>>", lambda e: self._lp_hint_update(), add="+")
+        self.cb_inv_item.bind("<KeyRelease>", lambda e: self._lp_hint_on_change(), add="+")
+
         # ★ إضافة (الإصدار 17 — الإضافة 2): النقر المزدوج على صف السلة يفتح
         # نافذة تعديله الكاملة — واختيار صف يعبّئ حقلي الكمية والسعر بقيمه
         # (السعر يقفل للمرتجع)، وEnter في حقلي التعديل السريع يطبّق على المحدد
@@ -9437,6 +11174,183 @@ class App(tk.Tk):
         self.tv_cart.bind("<<TreeviewSelect>>", lambda e: self._cart_sel_fill())
         for w in (self.e_cart_qty, self.e_cart_price):
             w.bind("<Return>", lambda e: self.update_selected_cart_row())
+
+    # ═══════════════════════════════════════════════════════
+    # ★★★ إضافة (آخر سعر بيع): تلميح آخر سعر تحت حقل الصنف + نافذة ★★★
+    # الاستعلام — ميزة قراءة فقط فوق جدول operations القائم بلا أي
+    # تعديل على أي سلوك قائم: التلميح يعرض سعر الوحدة لأحدث عملية بيع
+    # زمنياً (بالأوقات الحقيقية من monitor_op_times القائمة قراءةً فقط)
+    # ونافذة الاستعلام تعرض آخر 5 عمليات مطابقة، وكل بحث بفحص صلاحية
+    # داخلي ثانٍ (last_price_view) قبل أي قراءة، وأي فشل يُسجَّل في
+    # error_log.txt ولا يعيق إكمال الفاتورة أبداً
+    # ═══════════════════════════════════════════════════════
+    def _lp_build_hint_label(self):
+        """★ إضافة (آخر سعر بيع): بناء سطر التلميح داخل مضيفه تحت حقل
+        اسم الصنف — يُستدعى عند بناء شاشة الفاتورة وعند إعادة بناء
+        الواجهة بعد تبديل المستخدم لمن يملك المفتاح فقط"""
+        if getattr(self, "_inv_lp_hint_host", None) is None:
+            return
+        self.lbl_inv_last_price = tk.Label(
+            self._inv_lp_hint_host, text="", bg=CARD, fg=GRAY,
+            font=("Segoe UI", 10, "bold"), anchor="e", justify="right")
+        self.lbl_inv_last_price.pack(fill="x", padx=(60, 10), pady=(0, 6))
+
+    def _lp_hint_hide(self):
+        """★ إضافة (آخر سعر بيع): إخفاء سطر التلميح بهدوء — بلا أي بحث
+        وبلا أي خطأ مهما كانت الحالة (فشل التلميح لا يعيق الفاتورة
+        أبداً) وآمنة تماماً إن لم يكن التلميح مبنياً أصلاً"""
+        try:
+            lbl = getattr(self, "lbl_inv_last_price", None)
+            if lbl is not None and lbl.winfo_exists():
+                lbl.config(text="", fg=GRAY)
+        except Exception:
+            pass
+
+    def _lp_hint_on_change(self):
+        """★ إضافة (آخر سعر بيع): عند كتابة أي حرف — لا بحث إطلاقاً؛
+        فقط إخفاء التلميح فور تغيّر الاسم عن آخر ما بُحث عنه كي لا يبقى
+        سطر قديم مضلل (البحث عند Enter أو اختيار من القائمة أو خروج
+        المؤشر من الحقل فقط)"""
+        try:
+            if not user_has_permission(CURRENT_USER["name"], "last_price_view"):
+                return
+            cur = _lp_norm(self.cb_inv_item.get())
+            if cur != getattr(self, "_lp_last_query", None):
+                self._lp_hint_hide()
+        except Exception:
+            pass
+
+    def _lp_hint_update(self):
+        """★ إضافة (آخر سعر بيع): البحث عن آخر سعر بيع للصنف المكتوب
+        وتحديث سطر التلميح — يُستدعى عند خروج المؤشر من حقل اسم الصنف
+        أو ضغط Enter (بعد معالج الإضافة القائم) أو اختيار صنف من
+        القائمة. الطبقة الثانية من الصلاحية أول كل شيء: من لا يملك
+        last_price_view يخفي التلميح ويعود فوراً دون أي بحث"""
+        try:
+            if not user_has_permission(CURRENT_USER["name"], "last_price_view"):
+                self._lp_hint_hide()
+                return
+            lbl = getattr(self, "lbl_inv_last_price", None)
+            if lbl is None or not lbl.winfo_exists():
+                return
+            text = self.cb_inv_item.get().strip()
+            if not text:          # حقل فارغ: لا يتم أي بحث
+                self._lp_hint_hide()
+                return
+            res = last_price_find(CURRENT_USER["name"], text)
+            if res["status"] == "found":
+                row = res["row"]
+                cust = row["customer"] or "بدون اسم"
+                lbl.config(text=f"آخر سعر بيع: {money(row['price'])} — "
+                                f"بتاريخ {row['when']} — العميل: {cust}",
+                           fg=ACCENT)
+            elif res["status"] == "notfound":
+                lbl.config(text="لا يوجد سجل بيع سابق لهذا الصنف", fg=GRAY)
+            else:
+                lbl.config(text="تعذر جلب آخر سعر بيع الآن — سُجّل الخطأ في "
+                                "error_log.txt", fg=ORANGE)
+            self._lp_last_query = _lp_norm(text)
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+            try:
+                lbl = getattr(self, "lbl_inv_last_price", None)
+                if lbl is not None and lbl.winfo_exists():
+                    lbl.config(text="تعذر جلب آخر سعر بيع الآن — سُجّل الخطأ "
+                                    "في error_log.txt", fg=ORANGE)
+            except Exception:
+                pass
+
+    def show_last_prices_window(self):
+        """★ إضافة (آخر سعر بيع): نافذة استعلام صغيرة — حقل بحث وقائمة
+        آخر 5 عمليات بيع مطابقة (التاريخ/الصنف/سعر الوحدة/الكمية/العميل/
+        البائع/رقم الفاتورة)، المطابقة التامة بعد التطبيع أولًا فإن لم
+        توجد فمطابقة جزئية مع الإشارة لذلك، والبحث عند Enter أو ضغط زر
+        البحث فقط (لا بحث تلقائي مع كل حرف إطلاقاً)"""
+        # الطبقة الثانية (دفاع مزدوج مع إخفاء الزر): لا فتح بلا صلاحية
+        if not user_has_permission(CURRENT_USER["name"], "last_price_view"):
+            messagebox.showwarning("لا تملك صلاحية",
+                "استعلام آخر الأسعار يتطلب صلاحية «آخر سعر بيع (شاشة "
+                "الفاتورة)» — راجع الأدمن")
+            return
+        win = self.register_window(tk.Toplevel(self))
+        win.title("استعلام آخر الأسعار")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+        try:
+            win.transient(self)
+        except Exception:
+            pass
+        card = tk.Frame(win, bg=CARD, highlightbackground=BORDER,
+                        highlightthickness=1)
+        card.pack(fill="both", expand=True, padx=16, pady=14)
+        tk.Label(card, text="🔍 استعلام آخر الأسعار", bg=CARD, fg=DARK,
+                 font=FT).pack(pady=(12, 2))
+        tk.Label(card, text="اكتب اسم صنف ثم اضغط Enter أو زر البحث — آخر 5 عمليات بيع مطابقة",
+                 bg=CARD, fg=GRAY, font=("Segoe UI", 9)).pack(pady=(0, 6))
+        srow = tk.Frame(card, bg=CARD)
+        srow.pack(fill="x", padx=14, pady=4)
+        tk.Label(srow, text="اسم الصنف:", bg=CARD, fg=DARK,
+                 font=FB).pack(side="right", padx=(0, 8))
+        e_q = tk.Entry(srow, font=F, justify="center", relief="solid",
+                       bd=1, width=28)
+        e_q.pack(side="right", ipady=4)
+        lbl_mode = tk.Label(card, text="", bg=CARD, fg=GRAY,
+                            font=("Segoe UI", 10, "bold"), anchor="e",
+                            justify="right")
+        lbl_mode.pack(fill="x", padx=14, pady=(4, 2))
+        frm, tv = self.mk_tree(card,
+            ["رقم الفاتورة", "البائع", "العميل", "الكمية", "سعر الوحدة",
+             "الصنف", "التاريخ"],
+            [85, 100, 125, 65, 95, 180, 135])
+        frm.pack(fill="both", expand=True, padx=14, pady=(2, 8))
+        try:
+            tv.configure(height=6)
+        except Exception:
+            pass
+
+        def do_search():
+            """★ البحث عند Enter أو الزر فقط — محدود بآخر 5 عمليات
+            ولا يجمد الواجهة (لا بحث مع كل حرف إطلاقاً)"""
+            try:
+                text = e_q.get().strip()
+                tv.delete(*tv.get_children())
+                if not text:      # حقل فارغ: لا يتم أي بحث
+                    lbl_mode.config(text="اكتب اسم صنف للبحث أولًا", fg=ORANGE)
+                    return
+                res = last_price_search(CURRENT_USER["name"], text, 5)
+                if res["status"] == "found":
+                    for row in res["rows"]:
+                        tv.insert("", "end", values=(
+                            (row["invoice"] or "—"),
+                            (row["seller"] or "—"),
+                            (row["customer"] or "—"),
+                            f'{row["qty"]:g}',
+                            money(row["price"]),
+                            row["item"],
+                            row["when"]))
+                    lbl_mode.config(
+                        text=f"نتائج {res['mode']} — عدد النتائج: {len(res['rows'])}",
+                        fg=(ORANGE if res["mode"] == "مطابقة جزئية" else ACCENT))
+                elif res["status"] == "notfound":
+                    lbl_mode.config(text="لا توجد نتائج مطابقة لـ«" + text + "»",
+                                    fg=GRAY)
+                else:
+                    lbl_mode.config(text="", fg=GRAY)
+                    messagebox.showwarning("خطأ في البحث",
+                        "تعذر تنفيذ البحث الآن — سُجّل الخطأ في error_log.txt\n"
+                        "حاول مرة أخرى", parent=win)
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+                messagebox.showwarning("خطأ في البحث",
+                    "تعذر تنفيذ البحث الآن — سُجّل الخطأ في error_log.txt",
+                    parent=win)
+
+        b_go = self.mk_btn(srow, "🔍 بحث", do_search, ACCENT)
+        b_go.pack(side="right", padx=8)
+        add_tip(b_go, "عرض آخر 5 عمليات بيع مطابقة لاسم الصنف — مطابقة تامة "
+                      "أولًا فإن لم توجد فمطابقة جزئية")
+        e_q.bind("<Return>", lambda e: do_search())
+        e_q.focus_set()
 
     def add_to_cart(self):
         """★ إضافة (ميزة 6): التحقق ثم إضافة الصنف الحالي إلى السلة"""
@@ -9495,6 +11409,11 @@ class App(tk.Tk):
         self.e_inv_qty.delete(0, "end"); self.e_inv_price.delete(0, "end")
         self.cb_inv_item.set("")
         # ★ إضافة (الإصدار 16): تحديث قائمة الأصول — المتاح تغيّر بما أُضيف
+        # ★ إضافة (آخر سعر بيع): إخفاء تلميح آخر سعر بعد تفريغ حقل الصنف
+        # — التلميح يتحدث أو يختفي عند تغيّر الاسم (وتفريغ الحقل تغيير
+        # له)، والدالة آمنة تماماً لمن لا يملك المفتاح (لا تلميح له
+        # أصلاً) ولا تعيق إضافة السلة إطلاقاً
+        self._lp_hint_hide()
         self._refresh_inv_orig_list()
         self.update_cart_view()
         self.lbl_inv_status.config(text=f"✔ أُضيف إلى السلة ({t}: {item})", fg=GREEN)
@@ -9983,6 +11902,11 @@ class App(tk.Tk):
         # حفظ الفاتورة كاملة بنفس دالتها القائمة
         _credit4 = self._pending_credit
         self._pending_credit = None
+        # ★ إضافة (عروض الأسعار): التقاط سياق تحويل العرض المعلق (دون
+        # تصفير) — لا يُعلَّم العرض إلا بعد نجاح حفظ الفاتورة فعليًا في
+        # خطاف النجاح أدناه، وإن فشل الحفظ أو أُلغي بقي السياق معلقًا
+        # فيُعلَّم العرض عند المحاولة الناجحة التالية
+        _quote9 = self._pending_quote
         # ★★★ إضافة (الإصدار 21 — المطلوب 1-3/ج — الاستثناء ب): نقطة التفتيش
         # قبل حفظ الفاتورة (بيع أو مرتجع) مباشرة — نفس الدالة المركزية الوحيدة:
         # يستحيل بعدها تسجيل حركة على يوم تجاري قديم
@@ -10162,18 +12086,45 @@ class App(tk.Tk):
                 _remain4 = total - _down4
                 if _remain4 > 1e-9:
                     _ensure_stage4_tables()
+                    # ★★★ إضافة (موعد التحصيل): الترحيل الآمن أولًا — إن نجح
+                    # أُدرج موعد التحصيل مع الدين في العمود الجديد، وإن فشل
+                    # الترحيل يُدرج الدين بالعبارة القديمة نفسها حرفيًا بلا
+                    # الموعد (البرنامج يعمل بدون الميزة ولا يتوقف شيء)
+                    try:
+                        _ensure_collection_date_column()
+                    except Exception as e:
+                        log_error(e, sys.exc_info()[2])
+                    _cdate_ins4 = (str(_credit4.get("collection_date"))
+                                   if (_COLL_READY["done"]
+                                       and _credit4.get("collection_date"))
+                                   else None)
                     with connect() as conn:
-                        conn.execute(
-                            "INSERT INTO debts(customer_id, invoice_number, sale_id, "
-                            "total_amount, paid_amount, status, created_at) "
-                            "VALUES(?,?,?,?,?,?,?)",
-                            (_credit4["customer_id"], _inv4,
-                             (_ids4[0] if _ids4 else None), _remain4, 0.0, "مفتوح",
-                             datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                        if _COLL_READY["done"]:
+                            conn.execute(
+                                "INSERT INTO debts(customer_id, invoice_number, "
+                                "sale_id, total_amount, paid_amount, status, "
+                                "created_at, collection_date) VALUES(?,?,?,?,?,?,?,?)",
+                                (_credit4["customer_id"], _inv4,
+                                 (_ids4[0] if _ids4 else None), _remain4, 0.0,
+                                 "مفتوح",
+                                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                 _cdate_ins4))
+                        else:
+                            # عبارة الإدراج القديمة نفسها حرفيًا (بلا الموعد)
+                            conn.execute(
+                                "INSERT INTO debts(customer_id, invoice_number, sale_id, "
+                                "total_amount, paid_amount, status, created_at) "
+                                "VALUES(?,?,?,?,?,?,?)",
+                                (_credit4["customer_id"], _inv4,
+                                 (_ids4[0] if _ids4 else None), _remain4, 0.0, "مفتوح",
+                                 datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
                 audit("credit_sale_recorded",
                       f"فاتورة رقم {_inv4 or '—'} | العميل: {_credit4['customer_name']} | "
                       f"الإجمالي: {money(total)} | الدفعة الأولى: {money(_down4)} | "
-                      f"الدين المسجل: {money(max(_remain4, 0.0))}")
+                      f"الدين المسجل: {money(max(_remain4, 0.0))}"
+                      # ★ إضافة (موعد التحصيل): الموعد إن وُجد في سطر التدقيق
+                      + (f" | موعد التحصيل: {_credit4['collection_date']}"
+                         if _credit4.get("collection_date") else ""))
             except Exception as e:
                 log_error(e, sys.exc_info()[2])
                 messagebox.showwarning("بيع بالدين",
@@ -10187,6 +12138,30 @@ class App(tk.Tk):
                       f"المبلغ: {money(abs(total))} | فاتورة {len(snapshot)} صنف")
             except Exception:
                 pass
+        # ★★★ إضافة (عروض الأسعار): بعد نجاح حفظ الفاتورة فعليًا — تعليم
+        # العرض المحوَّل «محول لفاتورة» برقم الفاتورة نفسه وتصفير سياق
+        # التحويل المعلق (ولا يُلمس العرض مطلقًا إن فشل الحفظ أو أُلغي:
+        # يبقى مفتوحًا كما كان وسياقه باقٍ للمحاولة التالية) — الطبقة
+        # الثانية داخل quotation_mark_converted نفسها ثم التحديث مشروط
+        # بالحالة داخل عبارة SQL
+        if _quote9:
+            try:
+                self._pending_quote = None
+                _qok9, _qmsg9 = quotation_mark_converted(_quote9["id"], _inv4)
+                if _qok9:
+                    try:
+                        audit("quotation_converted",
+                              f"عرض رقم {_quote9['quote_no']} ← فاتورة رقم "
+                              f"{_inv4 or '—'} | المبلغ: {money(total)}")
+                    except Exception:
+                        pass
+                    for _qcb9 in list(getattr(self, "_quot_refresh_cbs", [])):
+                        try:
+                            _qcb9()
+                        except Exception:
+                            pass
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
         self.cart = []                          # السلة تُفرغ بعد الحفظ
         self.e_inv_customer.delete(0, "end")
         # ★ إضافة (إصدار 5): عودة الاختيار تلقائياً إلى «نقداً» بعد حفظ الفاتورة
@@ -11183,6 +13158,318 @@ class App(tk.Tk):
         b_exit.pack(side="right", padx=6)
         add_tip(b_exit, "إغلاق البرنامج بالكامل (مع نسخة احتياطية تلقائية كما هو قائم)")
 
+    # ═══════════════════════════════════════════════════════════
+    # ★★★ إضافات (قفل الخمول): حماية الجلسة عند ترك الجهاز مفتوحًا ★★★
+    # إذا بقي البرنامج دون أي تفاعل (ماوس أو كيبورد) للمدة المحددة في
+    # الإعدادات (idle_lock_minutes — افتراضيًا 5 دقائق و0 = إيقاف القفل)
+    # تُفتح شاشة قفل بملء الشاشة فوق كل النوافذ تعرض اسم المستخدم الحالي
+    # وتطلب الرقم السري لعودة نفس الجلسة ونفس الشاشات كما كانت (بلا أي
+    # rebuild)، مع زر «تبديل المستخدم» للدخول بحساب آخر من شاشة الدخول
+    # القائمة نفسها — القفل للجميع بلا استثناء (حماية لا ميزة ممنوحة)
+    # ═══════════════════════════════════════════════════════════
+
+    def _idle_on_activity(self, _e=None):
+        """★ إضافة (قفل الخمول): كل حدث نشاط (لوحة مفاتيح أو أزرار أو حركة
+        مؤشر أو عجلة فأرة) يحدّث طابع آخر نشاط فقط — متغير بسيط بلا أي عمل
+        ثقيل — والربط تم بـ add='+' عند الإنشاء فلا كُسرت أي ربطة قائمة"""
+        self._idle_last_activity = time.monotonic()
+
+    def _idle_lock_tick(self):
+        """★ إضافة (قفل الخمول): فحص كل ثانية عبر after متجددة — جدولة واحدة
+        تتكرر ولا تتراكم النداءات أبدًا؛ عند انقضاء المدة المحددة دون نشاط
+        مع وجود مستخدم مسجَّل دخوله ولا شاشة قفل مفتوحة تُفتح شاشة القفل،
+        وأي استثناء يُسجَّل في error_log.txt ولا ينهار البرنامج — فشل فتح
+        الشاشة يعني محاولة جديدة في الدورة التالية تلقائيًا"""
+        try:
+            self.after(1000, self._idle_lock_tick)   # الجدولة المتجددة الوحيدة
+        except Exception:
+            return                                   # النافذة تُغلق — انتهى الفحص
+        try:
+            # (1) لا جلسة نشطة؟ — النافذة الرئيسية مخفية (withdrawn) تعني
+            # شاشة الدخول أثناء تبديل المستخدم أو القفل اليدوي القائم: لا
+            # قفل خمول قبل تسجيل الدخول أصلًا، وطابع النشاط يُصفَّر كي لا
+            # يقفل مستخدم الجلسة الجديدة فور دخوله بطابع قديم
+            try:
+                if self.state() == "withdrawn":
+                    self._idle_last_activity = time.monotonic()
+                    return
+            except Exception:
+                return
+            # (2) شاشة قفل الخمول مفتوحة؟ — لا شيء (الفتح الصحيح يصفّر الطابع)
+            w = self._idle_lock_win
+            if w is not None:
+                try:
+                    if w.winfo_exists():
+                        return
+                except Exception:
+                    pass
+                self._idle_lock_win = None
+            # (3) المدة المحددة من جدول الإعدادات — بكاش يتجدد كل 30 ثانية
+            # (والحفظ من شاشة الإعدادات يحدّثه فورًا) فلا تُفتح القاعدة كل
+            # ثانية، والقيمة 0 = إيقاف القفل
+            self._idle_cache_tick += 1
+            if self._idle_lock_minutes_cache is None or self._idle_cache_tick >= 30:
+                self._idle_lock_minutes_cache = get_idle_lock_minutes()
+                self._idle_cache_tick = 0
+            minutes = self._idle_lock_minutes_cache
+            if minutes is None or minutes <= 0:
+                return
+            # (4) انقضت المدة دون أي نشاط؟ — فتح شاشة القفل
+            if time.monotonic() - self._idle_last_activity >= minutes * 60:
+                self._idle_open_lock()
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+            # أي فشل (بما فيه فتح الشاشة): البرنامج يعمل والمحاولة تتكرر
+            # في الدورة التالية — لا انهيار أبدًا
+
+    def _idle_open_lock(self):
+        """★ إضافة (قفل الخمول): فتح شاشة القفل — نافذة Toplevel بملء الشاشة
+        فوق كل النوافذ (-topmost) بخلفية داكنة: «الجلسة مقفلة» واسم المستخدم
+        وصلاحيته ووقت القفل وحقل الرقم السري (مخفي الأحرف ويستقبل التركيز
+        تلقائيًا) وزرا «فتح» و«تبديل المستخدم»، مع grab_set لمنع أي تفاعل مع
+        البرنامج خلفها — وإغلاق البرنامج من زر ✕ (أو Alt+F4) يبقى ممكنًا؛
+        أي فشل في البناء يُنظَّف ويُعاد المحاولة في الدورة التالية"""
+        if self._idle_lock_win is not None:
+            return
+        lock_time = datetime.now()
+        lock = tk.Toplevel(self)
+        lock.bind("<Destroy>",
+                  lambda _e: setattr(self, "_idle_lock_win", None), add="+")
+        try:
+            lock.title("🔒 جلسة مقفلة")
+            lock.configure(bg=DARK)
+            sw, sh = lock.winfo_screenwidth(), lock.winfo_screenheight()
+            # ملء الشاشة بنفس أسلوب شاشة الدخول القائمة حرفيًا: بلا إطار
+            # ويندوز ثم zoomed مع خطة بديلة بأبعاد الشاشة والفشل الهادئ
+            # بحجم معقول — والشاشة دائمًا فوق كل النوافذ (-topmost)
+            try:
+                lock.overrideredirect(True)
+            except Exception:
+                pass
+            fs_ok = False
+            try:
+                lock.state("zoomed")
+                fs_ok = True
+            except Exception:
+                fs_ok = False
+            if not fs_ok:
+                try:
+                    lock.geometry(f"{sw}x{sh}+0+0")
+                    fs_ok = True
+                except Exception:
+                    fs_ok = False
+            if not fs_ok:
+                lock.geometry("520x430+200+120")
+            try:
+                lock.resizable(False, False)
+            except Exception:
+                pass
+            try:
+                lock.attributes("-topmost", True)
+            except Exception:
+                pass
+
+            # ── الدوال قبل العناصر التي تستخدمها ──
+            def _destroy_lock():
+                """إغلاق شاشة قفل الخمول وتحرير القبضة — بأقصى جهد بلا أخطاء"""
+                self._idle_lock_win = None
+                try:
+                    lock.grab_release()
+                except Exception:
+                    pass
+                try:
+                    lock.destroy()
+                except Exception:
+                    pass
+
+            def _ensure_grab(tries=0):
+                """grab_set لمنع أي تفاعل مع البرنامج خلف الشاشة — إن كانت
+                قبضة أخرى نشطة (رسالة مفتوحة لحظة القفل) أو الشاشة لم تُعرض
+                بعد تُعاد المحاولة كل نصف ثانية، وبعد دقيقتين يكتفي بالتغطية
+                والتوبموس (الشاشة نفسها تبقى عاملة بالرقم السري)"""
+                try:
+                    if not lock.winfo_exists():
+                        return
+                except Exception:
+                    return
+                try:
+                    lock.grab_set()
+                    return
+                except Exception:
+                    pass
+                if tries >= 240:
+                    return
+                try:
+                    lock.after(500, lambda: _ensure_grab(tries + 1))
+                except Exception:
+                    pass
+
+            def _unlock():
+                """فتح القفل بالرقم السري — بنفس آلية التحقق القائمة نفسها
+                (get_user_row + verify_user_password دون أي تعديل عليهما)؛
+                الصحيح يغلق الشاشة ويعيد نفس الجلسة ونفس الشاشات المفتوحة
+                كما كانت دون أي rebuild، والخاطئ رسالة عربية واضحة والقفل
+                باقٍ والمحاولة مسجلة في error_log.txt"""
+                pwd = e_pwd.get()
+                if not pwd:
+                    err.config(text="أدخل الرقم السري")
+                    try:
+                        e_pwd.focus_set()
+                    except Exception:
+                        pass
+                    return
+                urow = get_user_row(self.user_name)
+                if urow is None or not verify_user_password(urow, pwd):
+                    log_error("قفل الخمول — _unlock: محاولة فتح برقم سري "
+                              f"خاطئ للمستخدم: {self.user_name}")
+                    err.config(text="الرقم السري غير صحيح — حاول من جديد")
+                    try:
+                        shake_widget(card)
+                        flash_entry_red(e_pwd)
+                    except Exception:
+                        pass
+                    e_pwd.delete(0, "end")
+                    try:
+                        e_pwd.focus_set()
+                    except Exception:
+                        pass
+                    return
+                self._idle_last_activity = time.monotonic()   # عدّاد نشاط جديد
+                audit("فتح بعد قفل الخمول", "عودة " + self.user_name +
+                      " — كانت مقفلة منذ " + lock_time.strftime("%H:%M:%S"))
+                _destroy_lock()
+
+            def _switch_user():
+                """تبديل المستخدم من شاشة القفل — إغلاق شاشة قفل الخمول ثم
+                نفس خطوات التبديل القائمة حرفيًا: تحذير السلة وإغلاق كل
+                النوافذ وخروج الجلسة في سجل التدقيق وشاشة الدخول القائمة،
+                وبعد الدخول يعمل rebuild_ui_for_current_user كما هو"""
+                _destroy_lock()
+                self._idle_last_activity = time.monotonic()
+                self.switch_user()
+
+            def _on_close():
+                """✕ / Alt+F4 — الخروج من البرنامج بالكامل يبقى ممكنًا من
+                شاشة القفل (بتأكيد عربي كنمط شاشة القفل اليدوي القائمة)"""
+                try:
+                    lock.grab_release()
+                except Exception:
+                    pass
+                if messagebox.askyesno("خروج", "الخروج من البرنامج بالكامل؟",
+                                       parent=lock):
+                    _destroy_lock()
+                    self.exit_app()
+                else:
+                    _ensure_grab()
+
+            def _refocus():
+                """تركيز إضافي بعد لحظة — بعض الأنظمة تحتاج عرض الشاشة أولًا"""
+                try:
+                    if lock.winfo_exists():
+                        e_pwd.focus_set()
+                except Exception:
+                    pass
+
+            # ── العناصر: عربية RTL بخلفية داكنة وبطاقة وسطية كشاشة الدخول ──
+            tk.Button(lock, text="✕", command=_on_close, bg=SIDEBAR, fg=BORDER,
+                      activebackground=RED, activeforeground="white",
+                      font=("Segoe UI", 9, "bold"), bd=0, relief="flat",
+                      cursor="hand2", takefocus=0).place(x=8, y=8, width=30,
+                                                        height=26)
+            card = tk.Frame(lock, bg=SIDEBAR, highlightbackground=BORDER,
+                            highlightthickness=1)
+            card.place(in_=lock, relx=0.5, rely=0.5, anchor="c", width=430)
+            tk.Label(card, text="🔒", bg=SIDEBAR, fg="#f1f5f9",
+                     font=("Segoe UI", 42)).pack(pady=(24, 2))
+            tk.Label(card, text="الجلسة مقفلة", bg=SIDEBAR, fg="#f1f5f9",
+                     font=("Segoe UI", 24, "bold")).pack(pady=(0, 2))
+            tk.Label(card, text=f"المستخدم: {self.user_name} ({self.role})",
+                     bg=SIDEBAR, fg="#94a3b8",
+                     font=("Segoe UI", 12, "bold")).pack(pady=(2, 0))
+            tk.Label(card, text="وقت القفل: " + lock_time.strftime("%H:%M:%S")
+                     + " — " + lock_time.strftime("%Y-%m-%d"), bg=SIDEBAR,
+                     fg="#64748b", font=("Segoe UI", 10, "bold")).pack(pady=(2, 12))
+            fr = tk.Frame(card, bg=SIDEBAR)
+            fr.pack()
+            tk.Label(fr, text="الرقم السري:", bg=SIDEBAR, fg="#e2e8f0", font=FB,
+                     width=12, anchor="e").pack(side="right", padx=(0, 8))
+            e_pwd = tk.Entry(fr, font=("Segoe UI", 13), justify="center",
+                             show="•", relief="solid", bd=1, width=20)
+            e_pwd.pack(side="right", ipady=6)
+            add_eye_to_entry(e_pwd)     # زر العين ككل حقول كلمات المرور
+            err = tk.Label(card, text="", bg=SIDEBAR, fg=RED,
+                           font=("Segoe UI", 10, "bold"), wraplength=380,
+                           justify="center")
+            err.pack(pady=(8, 0))
+            fr_btns = tk.Frame(card, bg=SIDEBAR)
+            fr_btns.pack(pady=(10, 4))
+            b_open = self.mk_btn(fr_btns, "🔓 فتح", _unlock, GREEN)
+            b_open.pack(side="right", padx=6)
+            add_tip(b_open, "الرقم السري الصحيح (أو Enter) يعيد نفس الجلسة "
+                           "وكل الشاشات المفتوحة كما كانت تمامًا")
+            b_sw = self.mk_btn(fr_btns, "👥 تبديل المستخدم", _switch_user, "#475569")
+            b_sw.pack(side="right", padx=6)
+            add_tip(b_sw, "إنهاء جلسة المستخدم الحالي والدخول بحساب آخر من "
+                         "شاشة الدخول القائمة")
+            tk.Label(card, text="⏱️ قفل تلقائي بعد خمول المدة المحددة من شاشة الإعدادات",
+                     bg=SIDEBAR, fg="#64748b", font=("Segoe UI", 9)).pack(pady=(2, 18))
+            e_pwd.bind("<Return>", lambda _e: _unlock())
+            e_pwd.focus_set()          # التركيز تلقائيًا في حقل الرقم السري
+            lock.protocol("WM_DELETE_WINDOW", _on_close)
+            lock.after(150, _ensure_grab)
+            lock.after(250, _refocus)
+            # نجح البناء كاملًا: تسجيل الشاشة ثم حدث القفل في سجل التدقيق
+            self._idle_lock_win = lock
+            audit("قفل خمول", "قفل تلقائي لعدم النشاط — الجلسة باسم "
+                  f"{self.user_name} ({self.role})")
+        except Exception as e:
+            # فشل بناء شاشة القفل: تنظيف أي نافذة نصف مبنية والبرنامج يعمل
+            # وتُعاد المحاولة في الدورة التالية (شرط الخمول ما زال قائمًا)
+            log_error(e, sys.exc_info()[2])
+            try:
+                lock.destroy()
+            except Exception:
+                pass
+            self._idle_lock_win = None
+
+    def save_idle_lock_setting(self):
+        """★ إضافة (قفل الخمول): حفظ مدة قفل الخمول من شاشة الإعدادات
+        القائمة — تحقق عربي كامل: عدد صحيح من 0 إلى 120 فقط (والأرقام
+        العربية مقبولة كعادتها في البرنامج كله)، ورسالة عربية واضحة عند
+        أي إدخال غير صالح ولا يُحفظ شيء، والقيمة تُخزَّن في settings
+        بمفتاح idle_lock_minutes وتسري فورًا (تحديث الكاش مباشرة)"""
+        try:
+            raw = self.e_idle_lock.get().strip().translate(AR_DIGITS)
+            if not raw:
+                messagebox.showwarning("قفل الخمول",
+                    "أدخل مدة قفل الخمول بالدقائق — عدد صحيح من 0 إلى 120 "
+                    "(0 = إيقاف القفل)")
+                return
+            try:
+                n = int(raw)
+            except ValueError:
+                messagebox.showwarning("قفل الخمول",
+                    "القيمة غير صالحة — أدخل عددًا صحيحًا من 0 إلى 120 "
+                    "(0 = إيقاف القفل)")
+                return
+            if n < 0 or n > 120:
+                messagebox.showwarning("قفل الخمول",
+                    "المدة يجب أن تكون من 0 إلى 120 دقيقة (0 = إيقاف القفل)")
+                return
+            set_setting(IDLE_LOCK_KEY, str(n))
+            self._idle_lock_minutes_cache = n     # تسري فورًا دون انتظار الكاش
+            self._idle_cache_tick = 0
+            audit("ضبط قفل الخمول",
+                  ("إيقاف قفل الخمول" if n == 0
+                   else f"مدة قفل الخمول: {n} دقيقة"))
+            self.lbl_idle_lock_status.config(
+                text=("✔ تم الحفظ — قفل الخمول مُوقف" if n == 0
+                      else f"✔ تم الحفظ — القفل بعد {n} دقيقة خمول"),
+                fg=GREEN)
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+            messagebox.showerror("خطأ", "تعذر حفظ إعدادات قفل الخمول")
+
     def switch_user(self):
         """★ إضافة (إصدار 4 — ميزة 1): تبديل المستخدم دون إغلاق البرنامج —
         تحذير إذا كانت السلة فيها أصناف، تسجيل الخروج في سجل التدقيق، إخفاء
@@ -11824,6 +14111,35 @@ class App(tk.Tk):
         self.lbl_login_bg_preview = tk.Label(card3, bg=CARD)
         self.lbl_login_bg_preview.pack(pady=(2, 12))
         self.refresh_login_bg_controls()
+
+        # ★ إضافة (قفل الخمول): بطاقة ضبط مدة قفل الخمول — من شاشة الإعدادات
+        # القائمة نفسها وبوابتها القائمة كما هي: خانة «قفل الخمول (دقائق)»
+        # تقبل عددًا صحيحًا من 0 إلى 120 مع تلميح «0 = إيقاف القفل»، ورسالة
+        # تحقق عربية عند أي إدخال غير صالح، وتُحفظ في settings بمفتاح
+        # idle_lock_minutes (افتراضي أول تشغيل 5 دقائق)
+        card4 = tk.Frame(p, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+        card4.pack(fill="x", padx=25, pady=8)
+        tk.Label(card4, text="⏱️ قفل الخمول", bg=CARD, fg=DARK, font=FT).pack(pady=(12, 4))
+        r7 = tk.Frame(card4, bg=CARD); r7.pack(fill="x", padx=20, pady=4)
+        tk.Label(r7, text="قفل الخمول (دقائق):", bg=CARD, fg=DARK,
+                 font=FB).pack(side="right", padx=(0, 8))
+        self.e_idle_lock = tk.Entry(r7, font=F, justify="center", relief="solid",
+                                    bd=1, width=8)
+        self.e_idle_lock.pack(side="right", padx=6, ipady=4)
+        tk.Label(r7, text="0 = إيقاف القفل — من 0 إلى 120", bg=CARD, fg=GRAY,
+                 font=("Segoe UI", 10, "bold")).pack(side="right", padx=6)
+        r8 = tk.Frame(card4, bg=CARD); r8.pack(fill="x", padx=20, pady=(2, 12))
+        b_il = self.mk_btn(r8, "💾 حفظ مدة القفل", self.save_idle_lock_setting, ACCENT)
+        b_il.pack(side="right", padx=6)
+        add_tip(b_il, "قفل الخمول يحمي الجلسة إذا تُرك الجهاز مفتوحًا: يُقفل "
+                     "البرنامج كاملًا بعد المدة ويُطلب الرقم السري للعودة")
+        self.lbl_idle_lock_status = tk.Label(r8, text="", bg=CARD, fg=GRAY,
+                                             font=("Segoe UI", 10, "bold"))
+        self.lbl_idle_lock_status.pack(side="right", padx=8)
+        try:
+            self.e_idle_lock.insert(0, str(get_idle_lock_minutes()))
+        except Exception:
+            pass
 
         # تحميل القيم المحفوظة الحالية من جدول settings
         try:
@@ -14150,6 +16466,28 @@ class App(tk.Tk):
         c_net = self.mk_card(cards_fr, "الصافي", DARK)
         for c in (c_cash, c_netw, c_rets, c_net):
             c[0].pack(side="right", fill="x", expand=True, padx=4)
+        # ★★★ إضافة (حزمة الصندوق والرقابة المالية — الميزة 5): بطاقة
+        # الديون المتعثرة — إضافة بحتة تحت صف البطاقات القائم لا تمس أي
+        # عنصر قائم: تُبنى فقط لمن يملك debt_aging_view (والأدمن بدوره
+        # دائماً)، وكل بنائها داخل try/except مستقل فلو فشل شيء بقيت
+        # اللوحة الحية كاملة كما هي، وتُحدَّث من refresh_live بنفس
+        # استقلالها (lbl_delinq = None يعني بطاقة غير موجودة لهذه الجلسة)
+        lbl_delinq = None
+        try:
+            if user_has_permission(self.user_name, "debt_aging_view"):
+                fr_dlq6 = tk.Frame(fr_live, bg=CARD,
+                                   highlightbackground=BORDER,
+                                   highlightthickness=1)
+                fr_dlq6.pack(fill="x", padx=2, pady=(4, 2))
+                tk.Label(fr_dlq6,
+                         text="ديون متعثرة (تجاوزت 60 يومًا بلا سداد)",
+                         bg=CARD, fg=GRAY,
+                         font=("Segoe UI", 10)).pack(pady=(8, 0))
+                lbl_delinq = tk.Label(fr_dlq6, text="—", bg=CARD, fg=RED,
+                                      font=FV)
+                lbl_delinq.pack(pady=(2, 8))
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
 
         # أسطر المعلومات: آخر عملية + المقارنة + المتصلون الآن
         info_fr = tk.Frame(fr_live, bg=BG)
@@ -14199,6 +16537,20 @@ class App(tk.Tk):
             c_netw[1].config(text=money(netw))
             c_rets[1].config(text=money(rets))
             c_net[1].config(text=money(net), fg=(GREEN if net >= 0 else RED))
+            # ★★★ إضافة (حزمة الصندوق والرقابة المالية — الميزة 5): تحديث
+            # بطاقة الديون المتعثرة — لمن يملك debt_aging_view حصراً (تُفحص
+            # عند كل تحديث أيضاً — دفاع مزدوج)، وبنية مستقلة تماماً: أي فشل
+            # يُكتب في error_log.txt ولا تمس بقية اللوحة الحية إطلاقًا
+            try:
+                if (lbl_delinq is not None
+                        and user_has_permission(self.user_name,
+                                                "debt_aging_view")):
+                    _cnt6, _tot6 = delinquent_debts_summary()
+                    lbl_delinq.config(
+                        text=f"{_cnt6} دين — إجمالي {money(_tot6)}",
+                        fg=(RED if _cnt6 > 0 else GREEN))
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
             # جدول البائعين اليوم (نفس بيانات day_totals من جدول العمليات)
             with connect() as conn:
                 srows = conn.execute("SELECT seller_name, type, COUNT(*) AS c, "
@@ -14447,6 +16799,19 @@ class App(tk.Tk):
                  self._build_system_health_tab)
         _add_tab("backup_monitor_view", "🗄️ مراقبة النسخ الاحتياطي",
                  self._build_backup_monitor_tab)
+        # ★ إضافة (كشف الصندوق): التبويب السادس — يُبنى لمن يملك
+        # cash_box_view فقط بنفس آلية _add_tab القائمة (إخفاء لا
+        # تعطيل)، ومنطق فتح النافذة نفسه لا يتغير (مفاتيح التقارير
+        # الخمسة كما هي)
+        _add_tab("cash_box_view", "💰 كشف الصندوق",
+                 self._build_cash_box_tab)
+        # ★ إضافة (ميزة «المصروفات»): التبويب السابع — يُبنى لمن يملك
+        # expense_report فقط بنفس آلية _add_tab القائمة (إخفاء لا
+        # تعطيل)، وزر الحذف داخله أدمن حصريًا بلا مفتاح جديد، ومنطق فتح
+        # النافذة نفسه توسع لمفتاح التقرير الجديد وحده
+        # (admin_reports_permission) — والمفاتيح الخمسة كما هي
+        _add_tab("expense_report", "💸 المصروفات",
+                 self._build_expenses_report_tab)
 
         if not nb.tabs():
             # سُحبت كل صلاحيات التقارير بعد ظهور الزر: رسالة داخل النافذة
@@ -14454,6 +16819,596 @@ class App(tk.Tk):
                                "راجع الأدمن",
                      bg=BG, fg=RED, font=FT).pack(expand=True)
         place_window(win, 950, 720, min_w=900, min_h=640, can_resize=False)
+
+    def _build_cash_box_tab(self, fr):
+        """★ إضافة (كشف الصندوق — التبويب السادس في «التقارير الإدارية»):
+        حركة النقدية (داخل / خارج / الصافي) لأي فترة تجارية بقاعدة
+        05:00 نفسها مع تصفية البائع، وجدول تفصيلي لكل حركة نقدية
+        بوقتها الحقيقي من مطابق سجل التدقيق القائم (قراءة فقط) وصفوف
+        الداخل بلون وصفوف الخارج بلون آخر، وحاسبة تسوية يدوية (رصيد
+        افتتاحي + صافي الحركة مقابل النقد الفعلي) بلا أي حفظ في قاعدة
+        البيانات، وزر حفظ نسخة نصية utf-8 في data_dir/reports — وكل دالة
+        حساب أو حفظ تبدأ بفحص الصلاحية مجددًا (الطبقة الثانية بعد إخفاء
+        التبويب لمن لا يملكه)"""
+        state = {"data": None, "f": "", "t": "", "period": "", "net": 0.0}
+        PERIODS7 = ("اليوم التجاري الحالي", "أمس (تجاري)", "آخر 7 أيام",
+                    "هذا الشهر", "مخصص (من – إلى)")
+        # ---------- صف الفترة والبائع وزر التحديث ----------
+        bar = tk.Frame(fr, bg=BG)
+        bar.pack(fill="x", padx=14, pady=(12, 2))
+        tk.Label(bar, text="الفترة:", bg=BG, fg=DARK, font=FB).pack(
+            side="right", padx=(0, 4))
+        pvar = tk.StringVar(value=PERIODS7[0])
+        cb_p = ttk.Combobox(bar, textvariable=pvar, state="readonly",
+                            values=list(PERIODS7), font=F, width=18,
+                            justify="center")
+        cb_p.pack(side="right", padx=4)
+        add_tip(cb_p, "فترة الكشف — عند «مخصص» يظهر حقلا من/إلى "
+                      "(الصيغ المقبولة: 2026-01-10 أو 10-01-2026 أو 10/01/2026 "
+                      "وبالأرقام العربية أيضًا)")
+        # حقلا الفترة المخصصة داخل إطار دائم الترتيب (يُفرَّغ محتواه
+        # عند غير «مخصص» فلا يختل ترتيب الصف)
+        fr_custom = tk.Frame(bar, bg=BG)
+        fr_custom.pack(side="right", padx=2)
+        e_from = tk.Entry(fr_custom, font=F, justify="center",
+                          relief="solid", bd=1, width=11)
+        e_to = tk.Entry(fr_custom, font=F, justify="center",
+                        relief="solid", bd=1, width=11)
+        tk.Label(bar, text="البائع:", bg=BG, fg=DARK, font=FB).pack(
+            side="right", padx=(14, 4))
+        svar = tk.StringVar(value="كل البائعين")
+        cb_s = ttk.Combobox(bar, textvariable=svar, state="readonly",
+                            values=cash_box_seller_options(), font=F,
+                            width=15, justify="center")
+        cb_s.pack(side="right", padx=4)
+        add_tip(cb_s, "تصفية الكشف بعمليات بائع واحد: فواتيره وتحصيلاته "
+                      "ومرتجعاته وحدها")
+        b_upd = self.mk_btn(bar, "🔄 تحديث", lambda: refresh(), ACCENT)
+        b_upd.pack(side="left", padx=6)
+        add_tip(b_upd, "إعادة حساب الكشف حسب الفترة والبائع المحددين")
+
+        def _show_custom7():
+            for w in (e_from, e_to):
+                w.pack_forget()
+            for w in fr_custom.winfo_children():
+                if isinstance(w, tk.Label):
+                    w.pack_forget()
+            if pvar.get() == "مخصص (من – إلى)":
+                if not e_from.get().strip():
+                    try:
+                        e_from.insert(0, get_business_day())
+                    except Exception:
+                        pass
+                if not e_to.get().strip():
+                    try:
+                        e_to.insert(0, get_business_day())
+                    except Exception:
+                        pass
+                tk.Label(fr_custom, text="إلى:", bg=BG, fg=DARK,
+                         font=FB).pack(side="right")
+                e_to.pack(side="right", padx=(2, 0))
+                tk.Label(fr_custom, text="من:", bg=BG, fg=DARK,
+                         font=FB).pack(side="right")
+                e_from.pack(side="right", padx=(2, 4))
+        cb_p.bind("<<ComboboxSelected>>", lambda e: _show_custom7())
+        _show_custom7()
+
+        # ---------- البطاقات الثلاث الكبيرة ----------
+        cards_fr = tk.Frame(fr, bg=BG)
+        cards_fr.pack(fill="x", padx=14, pady=4)
+        c_in = self.mk_card(cards_fr, "نقد داخل", GREEN)
+        c_out = self.mk_card(cards_fr, "نقد خارج", RED)
+        c_net = self.mk_card(cards_fr, "صافي الحركة", ACCENT)
+        for c in (c_in, c_out, c_net):
+            c[0].pack(side="right", fill="x", expand=True, padx=3)
+
+        lbl_desc = tk.Label(fr, text="", bg=BG, fg=GRAY,
+                            font=("Segoe UI", 10, "bold"), anchor="e")
+        lbl_desc.pack(fill="x", padx=14, pady=(2, 0))
+        lbl_perm = tk.Label(fr, text="", bg=BG, fg=RED,
+                            font=("Segoe UI", 10, "bold"), anchor="e")
+
+        # ---------- الجدول التفصيلي للحركات النقدية ----------
+        frm_t, tv = self.mk_tree(fr,
+                                 ["الوقت", "النوع", "رقم الفاتورة", "العميل",
+                                  "البائع", "المبلغ", "ملاحظة"],
+                                 [120, 140, 85, 150, 105, 115, 200])
+        tv.column("المبلغ", anchor="e")
+        tv.column("ملاحظة", anchor="w")
+        try:
+            tv.tag_configure("cb_in", background="#dcfce7")
+            tv.tag_configure("cb_out", background="#fee2e2")
+        except Exception:
+            pass
+        frm_t.pack(fill="both", expand=True, padx=14)
+        add_tip(tv, "كل حركة نقدية في الفترة مرتبة زمنيًا — الأخضر داخل "
+                    "والوردي خارج، والوقت الحقيقي من سجل التدقيق حيثما وُجد")
+
+        # ---------- حاسبة التسوية اليدوية (بلا أي حفظ في القاعدة) ----------
+        set_fr = tk.Frame(fr, bg=CARD, highlightbackground=BORDER,
+                          highlightthickness=1)
+        set_fr.pack(fill="x", padx=14, pady=(6, 12))
+        tk.Label(set_fr, text="🧮 حاسبة تسوية الدرج (يدوية — لا تُحفظ في "
+                              "قاعدة البيانات)", bg=CARD, fg=DARK,
+                 font=("Segoe UI", 10, "bold")).pack(pady=(8, 2))
+        row7 = tk.Frame(set_fr, bg=CARD)
+        row7.pack(fill="x", padx=10, pady=4)
+        tk.Label(row7, text="رصيد افتتاحي:", bg=CARD, fg=GRAY,
+                 font=FB).pack(side="right", padx=(0, 4))
+        e_open = tk.Entry(row7, font=F, justify="center", relief="solid",
+                          bd=1, width=12)
+        e_open.pack(side="right", padx=(0, 14))
+        digits_only_filter(e_open)
+        tk.Label(row7, text="النقد الفعلي في الدرج:", bg=CARD, fg=GRAY,
+                 font=FB).pack(side="right", padx=(0, 4))
+        e_actual = tk.Entry(row7, font=F, justify="center", relief="solid",
+                            bd=1, width=12)
+        e_actual.pack(side="right", padx=(0, 14))
+        digits_only_filter(e_actual)
+        b_clear = self.mk_btn(row7, "🧹 تفريغ الحقول",
+                              lambda: _clear_settle7(), "#64748b")
+        b_clear.pack(side="left", padx=6)
+        add_tip(b_clear, "تفريغ حقلي الرصيد الافتتاحي والنقد الفعلي")
+        b_save = self.mk_btn(row7, "💾 حفظ نسخة نصية",
+                             lambda: save_text(), "#0d9488")
+        b_save.pack(side="left", padx=6)
+        add_tip(b_save, "حفظ تقرير الكشف نصًا منسقًا بترميز utf-8 في مجلد "
+                        "reports بجانب قاعدة البيانات")
+        res7 = tk.Frame(set_fr, bg=CARD)
+        res7.pack(fill="x", padx=10, pady=(2, 8))
+        lbl_exp7 = tk.Label(res7,
+                            text="المتوقع في الدرج = رصيد افتتاحي + صافي "
+                                 "الحركة: —", bg=CARD, fg=DARK,
+                            font=("Segoe UI", 11, "bold"), anchor="e")
+        lbl_exp7.pack(fill="x")
+        lbl_res7 = tk.Label(res7, text="النتيجة: —", bg=CARD, fg=GRAY,
+                            font=("Segoe UI", 11, "bold"), anchor="e")
+        lbl_res7.pack(fill="x")
+
+        def _settle7(_e=None):
+            """الطبقة الثانية: فحص الصلاحية أول كل حساب تسوية"""
+            if not user_has_permission(self.user_name, "cash_box_view"):
+                lbl_exp7.config(text="المتوقع في الدرج = رصيد افتتاحي + "
+                                     "صافي الحركة: —", fg=GRAY)
+                lbl_res7.config(text="النتيجة: —", fg=GRAY)
+                return
+            try:
+                _op7 = to_num(e_open.get())
+                _ac7 = to_num(e_actual.get())
+                _op7 = (0.0 if _op7 is None else _op7)
+                _net7 = float(state.get("net") or 0.0)
+                _exp7 = _op7 + _net7
+                lbl_exp7.config(text="المتوقع في الدرج = رصيد افتتاحي + "
+                                     f"صافي الحركة: {money(_exp7)}",
+                                fg=DARK)
+                if _ac7 is None:
+                    lbl_res7.config(text="النتيجة: أدخل النقد الفعلي في "
+                                         "الدرج", fg=GRAY)
+                    return
+                _dif7 = _ac7 - _exp7
+                if abs(_dif7) < 0.005:
+                    lbl_res7.config(text="النتيجة: مطابق تمامًا ✔", fg=GREEN)
+                elif _dif7 > 0:
+                    lbl_res7.config(text=f"النتيجة: زيادة {money(_dif7)}",
+                                    fg=ORANGE)
+                else:
+                    lbl_res7.config(text=f"النتيجة: عجز {money(-_dif7)}",
+                                    fg=RED)
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+                lbl_res7.config(text="النتيجة: —", fg=GRAY)
+
+        def _clear_settle7():
+            try:
+                e_open.delete(0, "end")
+                e_actual.delete(0, "end")
+                _settle7()
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+
+        e_open.bind("<KeyRelease>", _settle7)
+        e_actual.bind("<KeyRelease>", _settle7)
+
+        def _clear_view7():
+            tv.delete(*tv.get_children())
+            c_in[1].config(text="0.00")
+            c_out[1].config(text="0.00")
+            c_net[1].config(text="0.00", fg=ACCENT)
+            lbl_desc.config(text="")
+
+        def refresh():
+            """الطبقة الثانية: فحص الصلاحية أول كل حساب للكشف (بعد إخفاء
+            التبويب) — ثم تحديد الفترة (اليوم التجاري بقاعدة 05:00 نفسها
+            من get_business_day القائمة حصرًا) وتصفية البائع"""
+            if not user_has_permission(self.user_name, "cash_box_view"):
+                lbl_perm.config(text="🔒 لا تملك صلاحية «كشف الصندوق» — "
+                                     "راجع الأدمن")
+                lbl_perm.pack(fill="x", padx=14, pady=6)
+                _clear_view7()
+                state["data"] = None
+                state["net"] = 0.0
+                _settle7()
+                return
+            try:
+                _p7 = pvar.get()
+                _bd7 = get_business_day()
+                if _p7 == PERIODS7[0]:
+                    _f7 = _t7 = _bd7
+                elif _p7 == PERIODS7[1]:
+                    _ds7 = last_business_days(2)
+                    _f7 = _t7 = (_ds7[1] if len(_ds7) > 1 else _ds7[0])
+                elif _p7 == PERIODS7[2]:
+                    _ds7 = last_business_days(7)
+                    _f7, _t7 = min(_ds7), max(_ds7)
+                elif _p7 == PERIODS7[3]:
+                    _f7 = _bd7[:8] + "01"
+                    _t7 = _bd7
+                else:
+                    _f7 = parse_date_multi(e_from.get())
+                    _t7 = parse_date_multi(e_to.get())
+                    if _f7 is None or _t7 is None:
+                        messagebox.showwarning("تاريخ خاطئ",
+                            "صيغة تاريخ غير صحيحة في «من» أو «إلى»\n"
+                            "الصيغ المقبولة: 2026-01-10 أو 10-01-2026 "
+                            "أو 10/01/2026", parent=fr.winfo_toplevel())
+                        return
+                    if _f7 == "" or _t7 == "":
+                        messagebox.showwarning("فترة ناقصة",
+                            "أدخل تاريخي «من» و«إلى» معًا للفترة المخصصة",
+                            parent=fr.winfo_toplevel())
+                        return
+                    if _f7 > _t7:
+                        messagebox.showwarning("فترة غير صحيحة",
+                            "تاريخ «من» يجب أن يكون قبل تاريخ «إلى» أو "
+                            "مساويًا له", parent=fr.winfo_toplevel())
+                        return
+                _sel7 = (None if svar.get() == "كل البائعين"
+                         else svar.get())
+                r = cash_box_period_data(self.user_name, _f7, _t7, _sel7)
+                if r is None:
+                    lbl_perm.config(text="🔒 لا تملك صلاحية «كشف الصندوق» "
+                                         "— راجع الأدمن")
+                    lbl_perm.pack(fill="x", padx=14, pady=6)
+                    _clear_view7()
+                    state["data"] = None
+                    state["net"] = 0.0
+                    _settle7()
+                    return
+                lbl_perm.pack_forget()
+                state.update({"data": r, "f": _f7, "t": _t7,
+                              "period": _p7, "net": r["net"]})
+                c_in[1].config(text=money(r["cash_in"]))
+                c_out[1].config(text=money(r["cash_out"]))
+                c_net[1].config(text=money(r["net"]),
+                                fg=(GREEN if r["net"] >= 0 else RED))
+                lbl_desc.config(
+                    text=f"الفترة: من {_f7} إلى {_t7} ({_p7}) — البائع: "
+                         f"{svar.get()} — عدد الحركات النقدية: "
+                         f"{len(r['movements'])}")
+                tv.delete(*tv.get_children())
+                if not r["movements"]:
+                    tv.insert("", "end",
+                              values=("لا حركات نقدية في هذه الفترة",
+                                      "—", "—", "—", "—", "—", "—"))
+                else:
+                    for m in r["movements"]:
+                        tv.insert("", "end",
+                                  tags=(("cb_in" if m["amount"] >= 0
+                                         else "cb_out"),),
+                                  values=(m["time"], m["kind"], m["invoice"],
+                                          m["customer"], m["seller"],
+                                          money(m["amount"]), m["note"]))
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+                lbl_perm.config(text="⚠️ تعذر حساب كشف الصندوق — سُجّل السبب "
+                                     "في error_log.txt")
+                lbl_perm.pack(fill="x", padx=14, pady=6)
+            _settle7()
+
+        def save_text():
+            """الطبقة الثانية: فحص الصلاحية قبل أي حفظ نصي"""
+            if not user_has_permission(self.user_name, "cash_box_view"):
+                messagebox.showwarning("لا تملك صلاحية",
+                    "لا تملك صلاحية «كشف الصندوق» — لم يُحفظ شيء",
+                    parent=fr.winfo_toplevel())
+                return
+            try:
+                if state.get("data") is None:
+                    refresh()
+                if state.get("data") is None:
+                    messagebox.showinfo("تنبيه", "لا توجد بيانات كشف لحفظها",
+                                        parent=fr.winfo_toplevel())
+                    return
+                _op7 = to_num(e_open.get())
+                _ac7 = to_num(e_actual.get())
+                _store7 = (get_setting("store_name")
+                           or "نظام المبيعات والمُرتجعات")
+                ok7, msg7 = cash_box_save_text_file(
+                    self.user_name, _store7, state["period"], state["f"],
+                    state["t"], svar.get(), state["data"], _op7, _ac7)
+                if ok7:
+                    messagebox.showinfo("تم الحفظ",
+                        "حُفظت النسخة النصية بنجاح في:\n" + msg7,
+                        parent=fr.winfo_toplevel())
+                else:
+                    messagebox.showerror("تعذر الحفظ", msg7,
+                                         parent=fr.winfo_toplevel())
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+                messagebox.showerror("تعذر الحفظ",
+                    "تعذر حفظ النسخة النصية — سُجّل السبب في error_log.txt",
+                    parent=fr.winfo_toplevel())
+
+        refresh()
+
+    def _build_expenses_report_tab(self, fr):
+        """★ إضافة (ميزة «المصروفات» — التبويب السابع في «التقارير
+        الإدارية»): مصروفات المحل لأي فترة تجارية بقاعدة 05:00 نفسها
+        (اليوم التجاري / أمس / آخر 7 أيام / هذا الشهر / مخصص من–إلى) مع
+        بحث نصي في الملاحظة يشمل النوع، وجدول (التاريخ والوقت / المستخدم
+        / النوع / الملاحظة / المبلغ) بأرقام مفصولة الآلاف ومحاذاة مناسبة،
+        وإجمالي كبير أعلى الجدول وثلاث بطاقات صغيرة (إجمالي الفترة /
+        عدد العمليات / أعلى مصروف)، وزر حذف المصروف المحدد أدمن حصريًا
+        (الطبقة الأولى: لا يُبنى لغيره أصلًا — بلا مفتاح جديد) بتأكيد
+        يذكر المبلغ والملاحظة ويُسجَّل الحذف في error_log.txt للتدقيق —
+        وكل حساب أو حذف يبدأ بفحص الصلاحية مجددًا (الطبقة الثانية بعد
+        إخفاء التبويب لمن لا يملكه)"""
+        state = {"ids": {}}
+        PERIODS8 = ("اليوم التجاري الحالي", "أمس (تجاري)", "آخر 7 أيام",
+                    "هذا الشهر", "مخصص (من – إلى)")
+        # ---------- صف الفترة والبحث وزرا التحديث والحذف ----------
+        bar = tk.Frame(fr, bg=BG)
+        bar.pack(fill="x", padx=14, pady=(12, 2))
+        tk.Label(bar, text="الفترة:", bg=BG, fg=DARK, font=FB).pack(
+            side="right", padx=(0, 4))
+        pvar = tk.StringVar(value=PERIODS8[0])
+        cb_p = ttk.Combobox(bar, textvariable=pvar, state="readonly",
+                            values=list(PERIODS8), font=F, width=18,
+                            justify="center")
+        cb_p.pack(side="right", padx=4)
+        add_tip(cb_p, "فترة تقرير المصروفات — عند «مخصص» يظهر حقلا من/إلى "
+                      "(الصيغ المقبولة: 2026-01-10 أو 10-01-2026 أو "
+                      "10/01/2026 وبالأرقام العربية أيضًا)")
+        # حقلا الفترة المخصصة داخل إطار دائم الترتيب (نفس أسلوب كشف
+        # الصندوق القائم حرفيًا)
+        fr_custom = tk.Frame(bar, bg=BG)
+        fr_custom.pack(side="right", padx=2)
+        e_from = tk.Entry(fr_custom, font=F, justify="center",
+                          relief="solid", bd=1, width=11)
+        e_to = tk.Entry(fr_custom, font=F, justify="center",
+                        relief="solid", bd=1, width=11)
+        tk.Label(bar, text="بحث:", bg=BG, fg=DARK, font=FB).pack(
+            side="right", padx=(14, 4))
+        e_search = tk.Entry(bar, font=F, justify="center", relief="solid",
+                            bd=1, width=16)
+        e_search.pack(side="right", padx=4)
+        add_tip(e_search, "بحث نصي داخل الملاحظة والنوع معًا — اضغط Enter "
+                          "أو زر التحديث للتنفيذ (مثال: نقل)")
+        e_search.bind("<Return>", lambda e: refresh())
+        b_upd = self.mk_btn(bar, "🔄 تحديث", lambda: refresh(), ACCENT)
+        b_upd.pack(side="left", padx=6)
+        add_tip(b_upd, "إعادة حساب تقرير المصروفات حسب الفترة والبحث")
+        # زر الحذف — الطبقة الأولى (إخفاء لا تعطيل): أدمن حصريًا بلا
+        # مفتاح جديد، لا يُبنى أصلًا لغير الأدمن حتى لو ملك expense_report
+        if self.role == ADMIN_ROLE:
+            b_del = self.mk_btn(bar, "🗑 حذف المحدد",
+                                lambda: delete_selected(), RED)
+            b_del.pack(side="left", padx=6)
+            add_tip(b_del, "حذف المصروف المحدد نهائيًا — أدمن حصريًا، مع "
+                           "تأكيد يذكر المبلغ والملاحظة، ويُسجَّل الحذف في "
+                           "error_log.txt للتدقيق")
+
+        def _show_custom8():
+            for w in (e_from, e_to):
+                w.pack_forget()
+            for w in fr_custom.winfo_children():
+                if isinstance(w, tk.Label):
+                    w.pack_forget()
+            if pvar.get() == "مخصص (من – إلى)":
+                if not e_from.get().strip():
+                    try:
+                        e_from.insert(0, get_business_day())
+                    except Exception:
+                        pass
+                if not e_to.get().strip():
+                    try:
+                        e_to.insert(0, get_business_day())
+                    except Exception:
+                        pass
+                tk.Label(fr_custom, text="إلى:", bg=BG, fg=DARK,
+                         font=FB).pack(side="right")
+                e_to.pack(side="right", padx=(2, 0))
+                tk.Label(fr_custom, text="من:", bg=BG, fg=DARK,
+                         font=FB).pack(side="right")
+                e_from.pack(side="right", padx=(2, 4))
+
+        def _on_period8(_e=None):
+            _show_custom8()
+            refresh()
+        cb_p.bind("<<ComboboxSelected>>", _on_period8)
+        _show_custom8()
+
+        # ---------- البطاقات الصغيرة الثلاث ----------
+        cards_fr = tk.Frame(fr, bg=BG)
+        cards_fr.pack(fill="x", padx=14, pady=4)
+        c_total = self.mk_card(cards_fr, "إجمالي الفترة", DARK)
+        c_count = self.mk_card(cards_fr, "عدد العمليات", ACCENT)
+        c_high = self.mk_card(cards_fr, "أعلى مصروف", RED)
+        for c in (c_total, c_count, c_high):
+            c[0].pack(side="right", fill="x", expand=True, padx=3)
+
+        # ---------- الإجمالي الكبير أعلى الجدول ----------
+        lbl_big = tk.Label(fr, text="إجمالي مصروفات الفترة: 0.00",
+                           bg=BG, fg=DARK, font=("Segoe UI", 14, "bold"),
+                           anchor="e")
+        lbl_big.pack(fill="x", padx=14, pady=(4, 0))
+        lbl_desc = tk.Label(fr, text="", bg=BG, fg=GRAY,
+                            font=("Segoe UI", 10, "bold"), anchor="e")
+        lbl_desc.pack(fill="x", padx=14, pady=(2, 0))
+        lbl_perm = tk.Label(fr, text="", bg=BG, fg=RED,
+                            font=("Segoe UI", 10, "bold"), anchor="e")
+
+        # ---------- الجدول ----------
+        frm_t, tv = self.mk_tree(
+            fr, ["التاريخ والوقت", "المستخدم", "النوع", "الملاحظة", "المبلغ"],
+            [140, 110, 110, 260, 115])
+        tv.column("المبلغ", anchor="e")
+        tv.column("الملاحظة", anchor="w")
+        config_tree_stripes(tv)
+        frm_t.pack(fill="both", expand=True, padx=14)
+        add_tip(tv, "مصروفات الفترة من الأحدث إلى الأقدم — كل مصروف يُنسب "
+                    "ليومه التجاري بقاعدة 05:00")
+
+        def _clear_view8():
+            tv.delete(*tv.get_children())
+            state["ids"] = {}
+            c_total[1].config(text="0.00")
+            c_count[1].config(text="0")
+            c_high[1].config(text="0.00")
+            lbl_big.config(text="إجمالي مصروفات الفترة: 0.00")
+            lbl_desc.config(text="")
+
+        def refresh():
+            """الطبقة الثانية: فحص الصلاحية أول كل حساب للتقرير (بعد إخفاء
+            التبويب لمن لا يملكه) — ثم تحديد الفترة التجارية بنفس آلية
+            كشف الصندوق القائمة حرفيًا وتنفيذ البحث النصي"""
+            if not (self.role == ADMIN_ROLE
+                    or user_has_permission(self.user_name,
+                                           "expense_report")):
+                lbl_perm.config(text="🔒 لا تملك صلاحية «عرض تقرير "
+                                     "المصروفات» — راجع الأدمن")
+                lbl_perm.pack(fill="x", padx=14, pady=6)
+                _clear_view8()
+                return
+            try:
+                _p8 = pvar.get()
+                _bd8 = get_business_day()
+                if _p8 == PERIODS8[0]:
+                    _f8 = _t8 = _bd8
+                elif _p8 == PERIODS8[1]:
+                    _ds8 = last_business_days(2)
+                    _f8 = _t8 = (_ds8[1] if len(_ds8) > 1 else _ds8[0])
+                elif _p8 == PERIODS8[2]:
+                    _ds8 = last_business_days(7)
+                    _f8, _t8 = min(_ds8), max(_ds8)
+                elif _p8 == PERIODS8[3]:
+                    _f8 = _bd8[:8] + "01"
+                    _t8 = _bd8
+                else:
+                    _f8 = parse_date_multi(e_from.get())
+                    _t8 = parse_date_multi(e_to.get())
+                    if _f8 is None or _t8 is None:
+                        messagebox.showwarning("تاريخ خاطئ",
+                            "صيغة تاريخ غير صحيحة في «من» أو «إلى»\n"
+                            "الصيغ المقبولة: 2026-01-10 أو 10-01-2026 "
+                            "أو 10/01/2026", parent=fr.winfo_toplevel())
+                        return
+                    if _f8 == "" or _t8 == "":
+                        messagebox.showwarning("فترة ناقصة",
+                            "أدخل تاريخي «من» و«إلى» معًا للفترة المخصصة",
+                            parent=fr.winfo_toplevel())
+                        return
+                    if _f8 > _t8:
+                        messagebox.showwarning("فترة غير صحيحة",
+                            "تاريخ «من» يجب أن يكون قبل تاريخ «إلى» أو "
+                            "مساويًا له", parent=fr.winfo_toplevel())
+                        return
+                r = expenses_report_data(self.user_name, _f8, _t8,
+                                         e_search.get())
+                if r is None:
+                    lbl_perm.config(text="🔒 لا تملك صلاحية «عرض تقرير "
+                                         "المصروفات» — راجع الأدمن")
+                    lbl_perm.pack(fill="x", padx=14, pady=6)
+                    _clear_view8()
+                    return
+                lbl_perm.pack_forget()
+                tv.delete(*tv.get_children())
+                state["ids"] = {}
+                for i, row in enumerate(r["rows"]):
+                    _iid8 = tv.insert(
+                        "", "end", tags=stripe_tags(i), values=(
+                            (row["created_at"] or "—")[:16],
+                            row["username"] or "—",
+                            row["category"] or "—",
+                            row["note"] or "",
+                            money(row["amount"])))
+                    state["ids"][_iid8] = row["id"]
+                if not r["rows"]:
+                    tv.insert("", "end", values=(
+                        "لا مصروفات في هذه الفترة", "—", "—", "", "—"))
+                c_total[1].config(text=money(r["total"]))
+                c_count[1].config(text=str(r["count"]))
+                c_high[1].config(text=money(r["highest"]))
+                lbl_big.config(text="إجمالي مصروفات الفترة: "
+                                    + money(r["total"]))
+                lbl_desc.config(
+                    text=f"الفترة: من {_f8} إلى {_t8} ({_p8})"
+                         + (f" — البحث: «{e_search.get().strip()}»"
+                            if e_search.get().strip() else ""))
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+                lbl_perm.config(text="⚠️ تعذر حساب تقرير المصروفات — سُجّل "
+                                     "السبب في error_log.txt")
+                lbl_perm.pack(fill="x", padx=14, pady=6)
+
+        def delete_selected():
+            """الطبقة الثانية المزدوجة: expense_report ثم أدمنية المنفّذ —
+            وتأكيد يذكر المبلغ والملاحظة قبل أي حذف، والحذف نفسه يعيد
+            الفحص ثالثة داخل expense_delete_row"""
+            if not (self.role == ADMIN_ROLE
+                    and user_has_permission(self.user_name,
+                                            "expense_report")):
+                messagebox.showwarning(
+                    "لا تملك صلاحية",
+                    "حذف المصروفات متاح للأدمن فقط — راجع الأدمن",
+                    parent=fr.winfo_toplevel())
+                return
+            try:
+                _sel8 = tv.selection()
+                if not _sel8:
+                    messagebox.showwarning(
+                        "لا تحديد",
+                        "اختر مصروفًا من الجدول أولًا ثم اضغط «حذف المحدد»",
+                        parent=fr.winfo_toplevel())
+                    return
+                _id8 = state["ids"].get(_sel8[0])
+                if _id8 is None:
+                    messagebox.showwarning(
+                        "لا تحديد", "اختر مصروفًا من الجدول أولًا",
+                        parent=fr.winfo_toplevel())
+                    return
+                _vals8 = tv.item(_sel8[0], "values")
+                _amt8 = str(_vals8[4] if len(_vals8) > 4 else "—")
+                _typ8 = str(_vals8[2] if len(_vals8) > 2 else "—")
+                _note8 = str(_vals8[3] if len(_vals8) > 3 else "—")
+                if not messagebox.askyesno(
+                        "تأكيد الحذف",
+                        "هل تريد حذف هذا المصروف نهائيًا؟\n\n"
+                        f"المبلغ: {_amt8}\nالنوع: {_typ8}\n"
+                        f"الملاحظة: {_note8}\n\nسيختفي من التقرير ومن كشف "
+                        "الصندوق فورًا ويُسجَّل الحذف في error_log.txt",
+                        parent=fr.winfo_toplevel()):
+                    return
+                ok8, msg8 = expense_delete_row(self.user_name, _id8)
+                if ok8:
+                    refresh()
+                    messagebox.showinfo("تم الحذف", msg8,
+                                        parent=fr.winfo_toplevel())
+                else:
+                    messagebox.showwarning("تعذر الحذف", msg8,
+                                           parent=fr.winfo_toplevel())
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+                messagebox.showerror(
+                    "خطأ", "تعذر حذف المصروف — سُجّل السبب في error_log.txt",
+                    parent=fr.winfo_toplevel())
+
+        tk.Label(fr, text="كل مصروف مسجل يُخصم تلقائيًا في كشف الصندوق ضمن "
+                          "«نقد خارج» — والحذف أدمن حصريًا ويُسجَّل في "
+                          "error_log.txt",
+                 bg=BG, fg=GRAY, font=("Segoe UI", 9), anchor="e").pack(
+                     fill="x", padx=14, pady=(2, 10))
+        refresh()
 
     def _build_morning_summary_tab(self, fr):
         """★ إضافة (المرحلة الثالثة — التبويب 1): الملخص الصباحي — آخر 30
@@ -14515,6 +17470,31 @@ class App(tk.Tk):
         add_tip(tv_s, "إجمالي مبيعات كل بائع في اليوم المختار وعدد فواتيره من سجل "
                       "التدقيق — انقر رأس أي عمود للفرز")
 
+        # ★★★ إضافة (موعد التحصيل): قسم «مستحقات التحصيل» — يُبنى حصريًا لمن
+        # يملك collections_list (الطبقة الأولى: إخفاء لا تعطيل — القسم لا
+        # يُبنى أصلًا لغيره)، ويعرض الديون ذات المواعيد: اسم العميل والمبلغ
+        # المتبقي وموعد التحصيل ورقم الهاتف والحالة (متأخر X يوم / مستحق
+        # اليوم / بعد Y يوم) — المتأخرة أولًا ثم مستحقة اليوم ثم أقرب
+        # القادمة بحد أقصى 20 صفًا، والمقارنة باليوم الميلادي العادي (لا
+        # حد 05:00) لأن الموعد وعد واقعي من العميل
+        coll_due_w = None
+        if user_has_permission(self.user_name, "collections_list"):
+            lbl_cdue = tk.Label(fr, text="⏰ مستحقات التحصيل", bg=BG, fg=DARK,
+                                font=("Segoe UI", 10, "bold"), anchor="e")
+            lbl_cdue.pack(fill="x", padx=14, pady=(6, 0))
+            frm_cd, tv_cd = self.mk_tree(
+                fr, ["الحالة", "الهاتف", "موعد التحصيل", "المبلغ المتبقي",
+                      "العميل"], [160, 120, 110, 130, 300])
+            tv_cd.configure(height=7)
+            tv_cd.tag_configure("coverdue", foreground=RED)
+            tv_cd.tag_configure("cdue", foreground=ORANGE)
+            config_tree_stripes(tv_cd)
+            frm_cd.pack(fill="x", padx=14, pady=(0, 10))
+            add_tip(tv_cd, "ديون بمواعيد تحصيل — المتأخرة أولًا ثم مستحقة اليوم "
+                           "ثم أقرب القادمة (حد أقصى 20 صفًا) — لمن يملك صلاحية "
+                           "«قائمة التحصيل اليومية (الديون)»")
+            coll_due_w = (lbl_cdue, tv_cd)
+
         def _clear_all():
             tv_t.delete(*tv_t.get_children())
             tv_s.delete(*tv_s.get_children())
@@ -14522,6 +17502,10 @@ class App(tk.Tk):
                 c[1].config(text="—")
             lbl_top.config(text="🏆 أعلى 5 منتجات مبيعًا")
             lbl_sel.config(text="👤 إجماليات البائعين")
+            # ★ إضافة (موعد التحصيل): تفريغ قسم المستحقات أيضًا
+            if coll_due_w is not None:
+                coll_due_w[1].delete(*coll_due_w[1].get_children())
+                coll_due_w[0].config(text="⏰ مستحقات التحصيل")
 
         def refresh():
             """جمع بيانات الملخص الصباحي — الصلاحية تُفحص هنا مجددًا عند كل
@@ -14573,6 +17557,44 @@ class App(tk.Tk):
                     tv_s.insert("", "end", tags=stripe_tags(i),
                                 values=(money(s["total"]), f"{s['invoices']:,}",
                                         s["name"]))
+            # ★★★ إضافة (موعد التحصيل): تعبئة قسم مستحقات التحصيل — الطبقة
+            # الأولى: القسم غير مبني أصلًا لمن لا يملك collections_list،
+            # والفحص يعاد هنا ثانية عند كل عرض (دفاع مزدوج)، والحالة ملونة
+            # (أحمر متأخر / برتقالي اليوم / عادي القادم) بأرقام بفواصل الآلاف
+            if coll_due_w is not None:
+                _lbl_cd_c, _tv_cd_c = coll_due_w
+                try:
+                    _has_coll_c = user_has_permission(self.user_name,
+                                                      "collections_list")
+                except Exception:
+                    _has_coll_c = False
+                if not _has_coll_c:
+                    _tv_cd_c.delete(*_tv_cd_c.get_children())
+                    _lbl_cd_c.config(text="⏰ مستحقات التحصيل")
+                else:
+                    _cdue_rows_c = collection_due_rows(limit=20)
+                    _tv_cd_c.delete(*_tv_cd_c.get_children())
+                    if not _cdue_rows_c:
+                        _tv_cd_c.insert("", "end", values=(
+                            "لا ديون بمواعيد تحصيل — كل الديون بلا مواعيد أو "
+                            "مسددة ✅", "—", "—", "—", "—"))
+                        _lbl_cd_c.config(text="⏰ مستحقات التحصيل — لا مواعيد قائمة")
+                    else:
+                        _tag_map_c = {"late": "coverdue", "today": "cdue"}
+                        for _i_c, _row_c in enumerate(_cdue_rows_c):
+                            _tg_c = _tag_map_c.get(_row_c["kind"], "")
+                            _tv_cd_c.insert(
+                                "", "end",
+                                tags=((_tg_c,) if _tg_c else ())
+                                      + (("odd",) if _i_c % 2 else ()),
+                                values=(_row_c["status_text"],
+                                        _row_c["phone"],
+                                        _row_c["collection_date"],
+                                        money(_row_c["remaining"]),
+                                        _row_c["cname"]))
+                        _lbl_cd_c.config(
+                            text=f"⏰ مستحقات التحصيل — {len(_cdue_rows_c):,} دينًا "
+                                 f"(المتأخرة أولًا ثم مستحقة اليوم ثم أقرب القادمة)")
 
         b_ref = self.mk_btn(bar, "🔄 عرض", refresh, "#475569")
         b_ref.pack(side="right", padx=4)
@@ -15371,6 +18393,39 @@ class App(tk.Tk):
         digits_only_filter(e_down4)
         tk.Label(dfr4, text=f"(0 إلى {money(total)} — الباقي يُسجل ديناً)",
                  bg=CARD, fg=GRAY, font=("Segoe UI", 9)).pack(side="right", padx=6)
+        # ★★★ إضافة (موعد التحصيل): خانة الموعد الاختيارية بصيغة YYYY-MM-DD
+        # — الحقل الفارغ مقبول تماماً (كالسلوك القديم: دين بلا موعد)، وإن
+        # كان مملوءًا وغير صالح فلا يتم البيع حتى تصحيحه أو تفريغه (التحقق
+        # داخل _confirm4)، وتحديد الموعد هنا جزء من شاشة البيع بالدين نفسها
+        # فلا يحتاج مفتاح صلاحية جديداً (sell_on_credit القائمة تكفي)
+        cdfr4 = tk.Frame(card, bg=CARD)
+        cdfr4.pack(fill="x", padx=14, pady=4)
+        tk.Label(cdfr4, text="موعد التحصيل (اختياري):", bg=CARD, fg=DARK,
+                 font=FB).pack(side="right", padx=(0, 8))
+        e_cdate4 = tk.Entry(cdfr4, font=F, justify="center", relief="solid",
+                            bd=1, width=14)
+        e_cdate4.pack(side="right", ipady=3)
+        add_tip(e_cdate4, "وعد العميل بالسداد بصيغة YYYY-MM-DD — اتركه فارغاً "
+                          "= دين بلا موعد (كالسلوك القديم)")
+        tk.Label(cdfr4, text="بصيغة YYYY-MM-DD — فارغ = بلا موعد",
+                 bg=CARD, fg=GRAY, font=("Segoe UI", 9)).pack(side="right", padx=6)
+        # ثلاثة أزرار سريعة تعبّئ الموعد تلقائيًا من اليوم الميلادي العادي
+        # (الموعد وعد واقعي فلا يُحسب بحدود اليوم التجاري 05:00)
+        def _fill_cdate4(days_c):
+            try:
+                e_cdate4.delete(0, "end")
+                e_cdate4.insert(0, date.fromordinal(
+                    date.today().toordinal() + days_c).isoformat())
+            except Exception:
+                pass
+        qbar4 = tk.Frame(card, bg=CARD)
+        qbar4.pack(fill="x", padx=14, pady=(0, 2))
+        self.mk_btn(qbar4, "بعد أسبوع", lambda: _fill_cdate4(7),
+                    ACCENT).pack(side="right", padx=3)
+        self.mk_btn(qbar4, "بعد شهر", lambda: _fill_cdate4(30),
+                    ACCENT).pack(side="right", padx=3)
+        self.mk_btn(qbar4, "بعد 3 أشهر", lambda: _fill_cdate4(90),
+                    ACCENT).pack(side="right", padx=3)
         lbl_err4 = tk.Label(card, text="", bg=CARD, fg=RED,
                             font=("Segoe UI", 9, "bold"), wraplength=400)
         lbl_err4.pack(pady=(2, 0))
@@ -15380,6 +18435,7 @@ class App(tk.Tk):
         self._cd_e_name = e_cname4
         self._cd_e_phone = e_cphone4
         self._cd_e_down = e_down4
+        self._cd_e_cdate = e_cdate4        # ★ إضافة (موعد التحصيل): حقل الموعد
         self._cd_lbl_warn = lbl_warn4
         self._cd_mode_var = cust_mode4
 
@@ -15453,10 +18509,26 @@ class App(tk.Tk):
                                          f"الفاتورة ({money(total)})")
                     shake_widget(card)
                     return
+                # ★★★ إضافة (موعد التحصيل): الحقل الفارغ مقبول (كالسلوك
+                # القديم تماماً: دين بلا موعد)، وإن كان مملوءًا وغير صالح
+                # برسالة تحقق عربية ولا يُتم البيع حتى التصحيح أو التفريغ
+                _cdate_val4 = None
+                _craw_c4 = e_cdate4.get().strip()
+                if _craw_c4:
+                    _cd_obj4 = parse_collection_date(_craw_c4)
+                    if _cd_obj4 is None:
+                        lbl_err4.config(text="صيغة موعد التحصيل غير صحيحة — "
+                                             "اكتب التاريخ بصيغة YYYY-MM-DD "
+                                             "(مثل 2026-10-21) أو اترك الحقل "
+                                             "فارغاً")
+                        shake_widget(card)
+                        return
+                    _cdate_val4 = _cd_obj4.isoformat()
                 # سياق الدين يُلتقط في بداية دالة الحفظ القائمة نفسها
                 self._pending_credit = {"customer_id": cid4,
                                         "customer_name": cname4,
-                                        "down": float(down4)}
+                                        "down": float(down4),
+                                        "collection_date": _cdate_val4}
                 try:
                     if mode == "op":
                         self.e_customer.delete(0, "end")
@@ -15891,46 +18963,171 @@ class App(tk.Tk):
     def _build_cw_debts_tab(self, tab):
         """★ إضافة (المرحلة الرابعة): تبويب الديون والتحصيل — جدول الديون
         المفتوحة والجزئية وزر «تسجيل تحصيل» (ممنوع تعديل أو حذف الدفعات
-        المسجلة من هذه النافذة إطلاقاً)"""
+        المسجلة من هذه النافذة إطلاقاً)
+        ★ إضافة (موعد التحصيل): عمود «موعد التحصيل» بتلوين توضيحي (أحمر
+        للمتأخر مع إظهار «متأخر X يوم» / برتقالي للمستحق اليوم أو غدًا /
+        عادي للقادم / «—» لمن لا موعد له)، وأزرار فلترة («المتأخرة
+        والمستحقة» / «هذا الأسبوع» / «الكل») والترتيب الافتراضي بالأقدم
+        استحقاقًا أولًا، وزر «تعديل موعد التحصيل» لمن يملك المفتاح الجديد
+        collection_date_edit فقط (إخفاء لا تعطيل: الزر لا يُبنى لغيره)"""
+        try:
+            _ensure_collection_date_column()
+        except Exception:
+            pass
         bar4 = tk.Frame(tab, bg=BG)
         bar4.pack(fill="x", padx=12, pady=(10, 4))
         self.mk_btn(bar4, "💵 تسجيل تحصيل", self._cw_collect,
                     GREEN).pack(side="left", padx=4)
         self.mk_btn(bar4, "🔄 تحديث", self._cw_refresh_debts,
                     "#475569").pack(side="left", padx=4)
+        # ★ إضافة (موعد التحصيل): زر تعديل الموعد — الطبقة الأولى (إخفاء
+        # لا تعطيل): لا يُبنى أصلاً لمن لا يملك collection_date_edit (والأدمن
+        # يملكه دائمًا بدوره عبر user_has_permission)، والدالة نفسها تفحص
+        # المفتاح داخليًا ثانياً قبل أي كتابة (الطبقة الثانية)
+        if user_has_permission(self.user_name, "collection_date_edit"):
+            self.mk_btn(bar4, "📅 تعديل موعد التحصيل",
+                        self._cw_edit_collection_date,
+                        "#7c3aed").pack(side="left", padx=4)
+        # ★ إضافة (موعد التحصيل): صف أزرار الفلترة — «المتأخرة والمستحقة»
+        # (الموعد فات أو اليوم أو غدًا) / «هذا الأسبوع» (اليوم حتى 7 أيام
+        # قادمة) / «الكل» — والافتراضي «الكل»
+        filt4 = tk.Frame(tab, bg=BG)
+        filt4.pack(fill="x", padx=12, pady=2)
+        tk.Label(filt4, text="عرض:", bg=BG, fg=GRAY,
+                 font=FB).pack(side="right", padx=(0, 6))
+        self._cw_debt_filter = tk.StringVar(value="الكل")
+        for txt4 in ("المتأخرة والمستحقة", "هذا الأسبوع", "الكل"):
+            tk.Radiobutton(filt4, text=txt4, variable=self._cw_debt_filter,
+                           value=txt4, font=FB, fg=DARK, bg=BG,
+                           selectcolor="#dbeafe", activebackground=BG,
+                           activeforeground=ACCENT, indicatoron=0, width=17,
+                           bd=1, relief="solid", cursor="hand2",
+                           command=lambda: self._cw_refresh_debts()).pack(
+                               side="right", padx=3)
         tk.Label(bar4, text="تُعرض الديون المفتوحة والجزئية — المسددة تُغلق "
                             "وتختفي من الجدول", bg=BG, fg=GRAY,
                  font=("Segoe UI", 9)).pack(side="right", padx=6)
         frm4, self._cw_tv_debt = self.mk_tree(
             tab, ["العميل", "رقم الفاتورة", "التاريخ", "أصل الدين", "المدفوع",
-                  "المتبقي", "الحالة"], [180, 100, 110, 120, 120, 120, 90])
+                  "المتبقي", "موعد التحصيل", "الحالة"],
+            [170, 90, 95, 105, 105, 105, 165, 80])
         frm4.pack(fill="both", expand=True, padx=12, pady=8)
+        # تلوين صفوف الموعد بنفس أسلوب tags الضمانات القائم تماماً
+        self._cw_tv_debt.tag_configure("coverdue", foreground=RED)
+        self._cw_tv_debt.tag_configure("cdue", foreground=ORANGE)
         self._cw_debt_map = {}
         self._cw_refresh_debts()
 
     def _cw_refresh_debts(self, *_):
-        """★ إضافة (المرحلة الرابعة): تحديث جدول الديون المفتوحة والجزئية"""
+        """★ إضافة (المرحلة الرابعة): تحديث جدول الديون المفتوحة والجزئية
+        ★ إضافة (موعد التحصيل): يُعرض عمود الموعد بتلوينه (أحمر متأخر /
+        برتقالي اليوم أو غدًا / عادي قادم / «—» بلا موعد)، والترتيب
+        الافتراضي بالأقدم استحقاقًا أولًا ثم الديون بلا موعد، وتُطبق
+        فلترة «المتأخرة والمستحقة» / «هذا الأسبوع» / «الكل» — والقراءة
+        تتراجع لعبارة SELECT القديمة نفسها حرفيًا إن تعذر عمود الموعد
+        (البرنامج يعمل بلا الميزة)، والمقارنة باليوم الميلادي العادي"""
         try:
             tv = getattr(self, "_cw_tv_debt", None)
             if tv is None or not tv.winfo_exists():
                 return
             tv.delete(*tv.get_children())
             self._cw_debt_map = {}
+            # الترحيل الآمن أولًا — إن تعذر العمود تُقرأ العبارة القديمة نفسها
+            _has_cdate_c = False
+            try:
+                _ensure_collection_date_column()
+                _has_cdate_c = _COLL_READY["done"]
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
             with connect() as conn:
-                rows4 = conn.execute(
-                    "SELECT d.id, d.invoice_number, d.created_at, d.total_amount, "
-                    "d.paid_amount, d.status, d.customer_id, c.name AS cname "
-                    "FROM debts d LEFT JOIN customers c ON c.id = d.customer_id "
-                    "WHERE d.status IN ('مفتوح','جزئي') ORDER BY d.id DESC"
-                    ).fetchall()
-            for d in rows4:
+                if _has_cdate_c:
+                    rows4 = conn.execute(
+                        "SELECT d.id, d.invoice_number, d.created_at, d.total_amount, "
+                        "d.paid_amount, d.status, d.customer_id, d.collection_date, "
+                        "c.name AS cname "
+                        "FROM debts d LEFT JOIN customers c ON c.id = d.customer_id "
+                        "WHERE d.status IN ('مفتوح','جزئي') ORDER BY d.id DESC"
+                        ).fetchall()
+                else:
+                    rows4 = conn.execute(
+                        "SELECT d.id, d.invoice_number, d.created_at, d.total_amount, "
+                        "d.paid_amount, d.status, d.customer_id, c.name AS cname "
+                        "FROM debts d LEFT JOIN customers c ON c.id = d.customer_id "
+                        "WHERE d.status IN ('مفتوح','جزئي') ORDER BY d.id DESC"
+                        ).fetchall()
+
+            def _cdate_of(r):
+                """تاريخ موعد الصف ككائن date أو None (بلا موعد أو غير صالح)"""
+                try:
+                    _v = (r["collection_date"]
+                          if "collection_date" in r.keys() else None)
+                    _v = str(_v or "").strip()
+                    if not _v:
+                        return None
+                    return date.fromisoformat(_v)
+                except Exception:
+                    return None
+
+            # ★ الترتيب الافتراضي بالأقدم استحقاقًا أولًا (المتأخر الأشد ثم
+            # الأقرب موعدًا)، وديون بلا موعد بعدها بالأحدث أولًا كالسابق
+            _today_c = date.today()
+            _dated_c, _undated_c = [], []
+            for r in rows4:
+                _cd = _cdate_of(r)
+                if _cd is not None:
+                    _dated_c.append((_cd, r))
+                else:
+                    _undated_c.append(r)
+            _dated_c.sort(key=lambda p: (p[0].toordinal(), p[1]["id"]))
+            _undated_c.sort(key=lambda r: -r["id"])
+            # ★ فلترة العرض حسب زر الفلتر المختار
+            _flt_c = (getattr(self, "_cw_debt_filter", None)
+                      and self._cw_debt_filter.get()) or "الكل"
+            if _flt_c == "المتأخرة والمستحقة":
+                # الموعد فات أو اليوم أو غدًا (الفئة التي تُطالب بها الآن)
+                _tom_o_c = _today_c.toordinal() + 1
+                _dated_c = [p for p in _dated_c
+                            if p[0].toordinal() <= _tom_o_c]
+                _undated_c = []
+            elif _flt_c == "هذا الأسبوع":
+                # من اليوم حتى 7 أيام قادمة (المواعيد القادمة هذا الأسبوع)
+                _lo_o_c, _hi_o_c = _today_c.toordinal(), _today_c.toordinal() + 6
+                _dated_c = [p for p in _dated_c
+                            if _lo_o_c <= p[0].toordinal() <= _hi_o_c]
+                _undated_c = []
+            for d in [r for _, r in _dated_c] + _undated_c:
                 rem4 = max(d["total_amount"] - d["paid_amount"], 0.0)
+                # ★ نص عمود الموعد + شارة التلوين (نفس أسلوب tags القائم)
+                _cd_txt_c, _tag_c = "—", ""
+                _cd_c = _cdate_of(d)
+                if _cd_c is not None:
+                    _diff_c = (_cd_c - _today_c).days
+                    if _diff_c < 0:
+                        _cd_txt_c = (f"{_cd_c.isoformat()} "
+                                     f"(متأخر {-_diff_c} يوم)")
+                        _tag_c = "coverdue"
+                    elif _diff_c == 0:
+                        _cd_txt_c = f"{_cd_c.isoformat()} (مستحق اليوم)"
+                        _tag_c = "cdue"
+                    elif _diff_c == 1:
+                        _cd_txt_c = f"{_cd_c.isoformat()} (مستحق غدًا)"
+                        _tag_c = "cdue"
+                    else:
+                        _cd_txt_c = _cd_c.isoformat()
                 tv.insert("", "end", iid=str(d["id"]),
+                          tags=((_tag_c,) if _tag_c else ()),
                           values=(d["cname"] or "—", d["invoice_number"] or "—",
                                   (d["created_at"] or "—")[:10],
                                   money(d["total_amount"]), money(d["paid_amount"]),
-                                  money(rem4), d["status"]))
+                                  money(rem4), _cd_txt_c, d["status"]))
                 self._cw_debt_map[str(d["id"])] = dict(d)
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+        # ★ إضافة (موعد التحصيل): مزامنة شريط تنبيه التحصيلات أعلى الشاشة
+        # الرئيسية بعد كل تحديث لجدول الديون (بعد أي تحصيل أو تعديل موعد)
+        # — سطر واحد محمي لا يكسر شيئاً أبداً
+        try:
+            self._refresh_collections_alert_bar()
         except Exception as e:
             log_error(e, sys.exc_info()[2])
 
@@ -16046,6 +19243,240 @@ class App(tk.Tk):
             self.mk_btn(bar4, "إلغاء", _cancel4, "#475569").pack(side="right", padx=6)
             e_amt4.focus_set()
             place_window(win, 460, 380)
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+
+    def _cw_edit_collection_date(self):
+        """★ إضافة (موعد التحصيل): زر «تعديل موعد التحصيل» في شاشة الديون —
+        نافذة صغيرة لتغيير تاريخ الدين المحدد أو إزالته، مع رسالة تأكيد
+        وتحديث الجدول واللون فورًا؛ الطبقة الثانية (فحص داخلي ثانٍ بعد
+        إخفاء الزر لمن لا يملكه): تبدأ بفحص user_has_permission وتعود فورًا
+        دون تنفيذ أي كتابة إن لم يتحقق، والتاريخ غير الصالح يُرفض برسالة
+        تحقق ولا يتغير شيء في قاعدة البيانات، وكل استثناء يُسجل في
+        error_log.txt برسالة عربية دون انهيار"""
+        # الطبقة الثانية (دفاع مزدوج مع إخفاء الزر — يبدأ حرفيًا بالفحص)
+        if not user_has_permission(CURRENT_USER["name"], "collection_date_edit"):
+            messagebox.showwarning("لا تملك صلاحية",
+                "تعديل موعد التحصيل يتطلب صلاحية «تعديل موعد التحصيل "
+                "(ديون قائمة)» — راجع الأدمن")
+            return
+        try:
+            tv = getattr(self, "_cw_tv_debt", None)
+            if tv is None or not tv.winfo_exists():
+                return
+            sel = tv.selection()
+            if not sel:
+                messagebox.showwarning("تنبيه", "اختر ديناً من الجدول أولاً")
+                return
+            d = self._cw_debt_map.get(sel[0])
+            if d is None:
+                return
+            rem4 = max(d["total_amount"] - d["paid_amount"], 0.0)
+            if rem4 <= 1e-9:
+                messagebox.showwarning("تنبيه", "هذا الدين مسدد بالكامل — "
+                                                "لا موعد لديون مغلقة")
+                return
+            # الترحيل الآمن قبل أي لمسة للعمود (إن تعذر لا تُفتح النافذة)
+            try:
+                _ensure_collection_date_column()
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+            if not _COLL_READY["done"]:
+                messagebox.showwarning("موعد التحصيل",
+                    "تعذر تجهيز عمود الموعد — سُجّل الخطأ في error_log.txt")
+                return
+            _cur_c = (str(d["collection_date"]).strip()
+                      if "collection_date" in d.keys()
+                      and str(d["collection_date"] or "").strip() else "")
+            win = self.register_window(tk.Toplevel(self))
+            win.title("تعديل موعد التحصيل")
+            win.configure(bg=BG)
+            win.resizable(False, False)
+            try:
+                win.transient(self)
+            except Exception:
+                pass
+            card = tk.Frame(win, bg=CARD, highlightbackground=BORDER,
+                            highlightthickness=1)
+            card.pack(fill="both", expand=True, padx=14, pady=12)
+            tk.Label(card, text="📅 تعديل موعد التحصيل", bg=CARD, fg=DARK,
+                     font=FT).pack(pady=(10, 2))
+            tk.Label(card, text=f"{d['cname'] or 'عميل'} — فاتورة رقم "
+                                f"{d['invoice_number'] or '—'} — المتبقي "
+                                f"{money(rem4)}",
+                     bg=CARD, fg=GRAY, font=FB).pack(pady=2)
+            tk.Label(card,
+                     text=(f"الموعد الحالي: {_cur_c}" if _cur_c
+                           else "الموعد الحالي: — (لا موعد)"),
+                     bg=CARD, fg=ACCENT, font=("Segoe UI", 10, "bold")).pack(
+                         pady=(0, 4))
+            gfr_c = tk.Frame(card, bg=CARD)
+            gfr_c.pack(pady=4)
+            tk.Label(gfr_c, text="الموعد الجديد:", bg=CARD, fg=GRAY,
+                     font=FB).grid(row=0, column=0, sticky="e", padx=8, pady=5)
+            e_new_c = tk.Entry(gfr_c, font=F, justify="center", relief="solid",
+                               bd=1, width=16)
+            e_new_c.grid(row=0, column=1, padx=8, pady=5)
+            if _cur_c:
+                e_new_c.insert(0, _cur_c)
+            tk.Label(gfr_c, text="بصيغة YYYY-MM-DD", bg=CARD, fg=GRAY,
+                     font=("Segoe UI", 9)).grid(row=1, column=1, pady=(0, 2))
+            lbl_err_c = tk.Label(card, text="", bg=CARD, fg=RED,
+                                 font=("Segoe UI", 9, "bold"), wraplength=380)
+            lbl_err_c.pack()
+
+            def _save_c():
+                # الطبقة الثانية مجددًا داخل مسار التنفيذ نفسه
+                if not user_has_permission(CURRENT_USER["name"],
+                                           "collection_date_edit"):
+                    messagebox.showwarning("لا تملك صلاحية",
+                        "لا تملك صلاحية تعديل موعد التحصيل — لم يُغيّر شيء",
+                        parent=win)
+                    return
+                _raw_c = e_new_c.get().strip()
+                if not _raw_c:
+                    lbl_err_c.config(text="اكتب التاريخ الجديد بصيغة YYYY-MM-DD "
+                                          "أو استخدم «إزالة الموعد»")
+                    shake_widget(card)
+                    return
+                _nd_c = parse_collection_date(_raw_c)
+                if _nd_c is None:
+                    # تاريخ غير صالح: يُرفض ولا يتغير شيء في قاعدة البيانات
+                    lbl_err_c.config(text="تاريخ غير صالح — الصيغة الصحيحة "
+                                          "YYYY-MM-DD (مثل 2026-10-21)")
+                    shake_widget(card)
+                    return
+                try:
+                    _iso_c = _nd_c.isoformat()
+                    with connect() as conn:
+                        conn.execute(
+                            "UPDATE debts SET collection_date=? WHERE id=?",
+                            (_iso_c, d["id"]))
+                    audit("collection_date_set",
+                          f"العميل: {d['cname'] or '—'} | فاتورة رقم "
+                          f"{d['invoice_number'] or '—'} | الموعد: "
+                          f"{(_cur_c or '—')} ← {_iso_c}")
+                    win.destroy()
+                    self._cw_refresh_debts()   # تحديث الجدول واللون فورًا
+                    messagebox.showinfo("تعديل موعد التحصيل",
+                        f"تم تحديث موعد التحصيل إلى {_iso_c} بنجاح")
+                except Exception as e:
+                    log_error(e, sys.exc_info()[2])
+                    messagebox.showerror("خطأ", "تعذر تعديل الموعد — سُجّل "
+                                        "الخطأ في error_log.txt", parent=win)
+
+            def _remove_c():
+                # الطبقة الثانية مجددًا داخل مسار التنفيذ نفسه
+                if not user_has_permission(CURRENT_USER["name"],
+                                           "collection_date_edit"):
+                    messagebox.showwarning("لا تملك صلاحية",
+                        "لا تملك صلاحية تعديل موعد التحصيل — لم يُغيّر شيء",
+                        parent=win)
+                    return
+                if not _cur_c:
+                    messagebox.showinfo("تعديل موعد التحصيل",
+                        "هذا الدين بلا موعد أصلًا — لا شيء يُزال", parent=win)
+                    return
+                if not messagebox.askyesno("تأكيد الإزالة",
+                        f"إزالة موعد التحصيل ({_cur_c}) من دين "
+                        f"{d['cname'] or 'العميل'}؟\n"
+                        "سيبقى الدين قائمًا بموعده القديم محذوفًا",
+                        parent=win):
+                    return
+                try:
+                    with connect() as conn:
+                        conn.execute("UPDATE debts SET collection_date=NULL "
+                                     "WHERE id=?", (d["id"],))
+                    audit("collection_date_removed",
+                          f"العميل: {d['cname'] or '—'} | فاتورة رقم "
+                          f"{d['invoice_number'] or '—'} | أُزيل الموعد: "
+                          f"{_cur_c}")
+                    win.destroy()
+                    self._cw_refresh_debts()   # تحديث الجدول واللون فورًا
+                    messagebox.showinfo("تعديل موعد التحصيل",
+                        "تمت إزالة موعد التحصيل — الدين بلا موعد الآن")
+                except Exception as e:
+                    log_error(e, sys.exc_info()[2])
+                    messagebox.showerror("خطأ", "تعذر إزالة الموعد — سُجّل "
+                                        "الخطأ في error_log.txt", parent=win)
+
+            def _cancel_c():
+                win.destroy()
+
+            bar_c = tk.Frame(card, bg=CARD)
+            bar_c.pack(fill="x", pady=(4, 10))
+            self.mk_btn(bar_c, "💾 حفظ الموعد", _save_c, GREEN).pack(
+                side="right", padx=6)
+            self.mk_btn(bar_c, "🗑 إزالة الموعد", _remove_c, RED).pack(
+                side="right", padx=6)
+            self.mk_btn(bar_c, "إلغاء", _cancel_c, "#475569").pack(
+                side="right", padx=6)
+            e_new_c.focus_set()
+            place_window(win, 470, 380)
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+
+    def _refresh_collections_alert_bar(self):
+        """★ إضافة (موعد التحصيل): شريط تنبيه التحصيلات أعلى الشاشة
+        الرئيسية — يُبنى فوق الشريط الإحصائي مباشرة (نفس مكان شريط إشعار
+        التحديث القائم) لمن يملك collections_list فقط (الطبقة الأولى:
+        إخفاء لا تعطيل — لا شريط أصلًا لغيره)، ولا شريط إن لم توجد ديون
+        متأخرة أو مستحقة اليوم، والنص: «تحصيلات: X متأخرة وY مستحقة
+        اليوم — الإجمالي: Z» بأرقام بفواصل الآلاف؛ يُستدعى بعد الدخول
+        ومع كل تنقل وتحديث إحصائيات (refresh_stats) وبعد كل تحديث لجدول
+        الديون ومع تبديل المستخدم (rebuild_ui_for_current_user)، وكاش
+        الأرقام يمنع إعادة البناء ما لم تتغير — فلا وميض ولا كلفة"""
+        try:
+            _old_c = getattr(self, "_coll_alert_bar", None)
+            # الطبقة الأولى: بلا collections_list لا يُبنى الشريط إطلاقًا
+            if not user_has_permission(self.user_name, "collections_list"):
+                if _old_c is not None:
+                    try:
+                        _old_c.destroy()
+                    except Exception:
+                        pass
+                    self._coll_alert_bar = None
+                    self._coll_alert_cache = None
+                return
+            _late_n_c, _today_n_c, _tot_c = collection_due_counts()
+            # لا متأخرة ولا مستحقة اليوم → لا شريط (ويختفي إن كان قائمًا)
+            if _late_n_c <= 0 and _today_n_c <= 0:
+                if _old_c is not None:
+                    try:
+                        _old_c.destroy()
+                    except Exception:
+                        pass
+                    self._coll_alert_bar = None
+                    self._coll_alert_cache = None
+                return
+            _state_c = (_late_n_c, _today_n_c, round(_tot_c + 1e-9, 2))
+            # الشريط قائم والأرقام لم تتغير → يبقى كما هو بلا إعادة بناء
+            if (_old_c is not None
+                    and getattr(self, "_coll_alert_cache", None) == _state_c):
+                return
+            if _old_c is not None:
+                try:
+                    _old_c.destroy()
+                except Exception:
+                    pass
+                self._coll_alert_bar = None
+            _bg_c, _fg_c, _bd_c = "#fee2e2", "#991b1b", "#dc2626"
+            bar_c = tk.Frame(self.container, bg=_bg_c,
+                             highlightbackground=_bd_c, highlightthickness=1)
+            try:                  # فوق الشريط الإحصائي مباشرة (نمط شريط التحديث)
+                bar_c.pack(fill="x", padx=25, pady=(10, 0),
+                           before=self.stats_bar_frame)
+            except Exception:
+                bar_c.pack(fill="x", padx=25, pady=(10, 0))
+            tk.Label(bar_c,
+                     text=(f"⏰ تحصيلات: {_late_n_c:,} متأخرة و"
+                           f"{_today_n_c:,} مستحقة اليوم — "
+                           f"الإجمالي: {money(_tot_c)}"),
+                     bg=_bg_c, fg=_fg_c,
+                     font=("Segoe UI", 10, "bold")).pack(
+                         side="right", padx=(4, 12), pady=4)
+            self._coll_alert_bar = bar_c
+            self._coll_alert_cache = _state_c
         except Exception as e:
             log_error(e, sys.exc_info()[2])
 
@@ -16399,6 +19830,1528 @@ class App(tk.Tk):
         except Exception as e:
             log_error(e, sys.exc_info()[2])
 
+    # ═══════════════════════════════════════════════════════════
+    # ★★★ إضافات (حزمة الصندوق والرقابة المالية — المرحلة الأولى): النوافذ ★★★
+    # ثلاث نوافذ جديدة محكومات بمفاتيحها من الكتالوج عبر user_has_permission
+    # القائم (الأدمن يملكها بدوره دائماً)، وكل نافذة تفحص صلاحيتها مرة ثانية
+    # عند الفتح (دفاع مزدوج مع إخفاء الزر)، وكل بناء وتحديث داخل try/except
+    # مستقل يكتب التفاصيل في error_log.txt ويعرض رسالة عربية قصيرة داخل
+    # النافذة ولا ينهار البرنامج أبدًا
+    # ═══════════════════════════════════════════════════════════
+
+    def show_cash_report(self):
+        """★ إضافة (حزمة الصندوق والرقابة المالية — الميزة 1): فتح «كشف
+        الصندوق اليومي» — الطبقة الثانية عند الفتح (دفاع مزدوج مع إخفاء
+        الزر في الشريط)، قائمة منسدلة بآخر 30 يومًا تجاريًا (افتراضيًا
+        اليوم التجاري الجاري — لا إدخال تاريخ يدوي)، وبطاقات أرقام ذلك
+        اليوم من cash_report_data القائمة، ثم سطر النقدية المتوقعة في
+        الدرج بخط بارز مع تفصيل المعادلة وسطر المقارنة المسائية"""
+        # الطبقة الثانية
+        if not (self.role == ADMIN_ROLE
+                or user_has_permission(self.user_name, "cash_report_view")):
+            b = getattr(self, "nav_buttons", {}).get("cash_report")
+            if b is not None:
+                b.pack_forget()   # زر متقادم بعد تبديل المستخدم: يُخفى فورًا
+            messagebox.showwarning("لا تملك صلاحية",
+                "كشف الصندوق يتطلب صلاحية «كشف الصندوق اليومي» — راجع الأدمن")
+            return
+        win = self.register_window(tk.Toplevel(self))
+        win.title("كشف الصندوق اليومي")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+        # شريط اختيار اليوم التجاري — آخر 30 يومًا تجاريًا جاهزة لا غير
+        bar6 = tk.Frame(win, bg=BG)
+        bar6.pack(fill="x", padx=14, pady=(12, 2))
+        tk.Label(bar6, text="اليوم التجاري:", bg=BG, fg=GRAY,
+                 font=FB).pack(side="right", padx=(0, 6))
+        days6 = last_business_days(30)
+        _daymap6 = {}
+        for d in days6:
+            _daymap6[f"{d} ({day_name(d)})"] = d
+        _cur6 = get_business_day()
+        day_var6 = tk.StringVar(value=f"{_cur6} ({day_name(_cur6)})")
+        cb6 = ttk.Combobox(bar6, textvariable=day_var6, state="readonly",
+                           values=list(_daymap6.keys()), font=F, width=24)
+        cb6.pack(side="right", ipady=3)
+        # بطاقات أرقام اليوم في صفين — نفس أسلوب بطاقات البرنامج
+        cards_fr6 = tk.Frame(win, bg=BG)
+        cards_fr6.pack(fill="x", padx=10, pady=6)
+        _row_a6 = tk.Frame(cards_fr6, bg=BG)
+        _row_a6.pack(fill="x", pady=2)
+        _row_b6 = tk.Frame(cards_fr6, bg=BG)
+        _row_b6.pack(fill="x", pady=2)
+        def _card6(parent, title, color):
+            fr = tk.Frame(parent, bg=CARD, highlightbackground=BORDER,
+                          highlightthickness=1)
+            fr.pack(side="right", fill="x", expand=True, padx=4, pady=2)
+            tk.Label(fr, text=title, bg=CARD, fg=GRAY,
+                     font=("Segoe UI", 9)).pack(pady=(8, 0))
+            v = tk.Label(fr, text="0", bg=CARD, fg=color,
+                         font=("Segoe UI", 13, "bold"))
+            v.pack(pady=(2, 8))
+            return v
+        v_total6 = _card6(_row_a6, "إجمالي المبيعات (نقدي + دين)", DARK)
+        v_cash6 = _card6(_row_a6, "المبيعات النقدية", GREEN)
+        v_credit6 = _card6(_row_a6, "بيع بالدين", ORANGE)
+        v_first6 = _card6(_row_a6, "الدفعات الأولى المسجلة", ACCENT)
+        v_coll6 = _card6(_row_b6, "التحصيلات المسجلة", "#0d9488")
+        v_rets6 = _card6(_row_b6, "المرتجعات", RED)
+        v_exp6 = _card6(_row_b6, "المصروفات", RED)
+        lbl_net6 = tk.Label(win, text="", bg=BG, fg=GRAY,
+                            font=("Segoe UI", 9), anchor="e")
+        lbl_net6.pack(fill="x", padx=14)
+        # السطر الأهم: النقدية المتوقعة في الدرج بخط بارز + المعادلة
+        drawer_fr6 = tk.Frame(win, bg=CARD, highlightbackground=BORDER,
+                              highlightthickness=1)
+        drawer_fr6.pack(fill="x", padx=10, pady=(4, 2))
+        lbl_draw6 = tk.Label(drawer_fr6, text="—", bg=CARD, fg=DARK,
+                             font=("Segoe UI", 15, "bold"))
+        lbl_draw6.pack(pady=(10, 2))
+        tk.Label(drawer_fr6,
+                 text="النقدية المتوقعة في الدرج = الداخل نقدًا − الخارج نقدًا",
+                 bg=CARD, fg=GRAY, font=("Segoe UI", 10)).pack()
+        lbl_formula6 = tk.Label(drawer_fr6, text="", bg=CARD, fg=GRAY,
+                                font=("Segoe UI", 9), justify="center")
+        lbl_formula6.pack(pady=(0, 2))
+        tk.Label(drawer_fr6,
+                 text="قارن هذا الرقم مع النقد الفعلي في الدرج كل مساء",
+                 bg=CARD, fg=ORANGE, font=("Segoe UI", 9, "bold")).pack(pady=(0, 10))
+        lbl_err6 = tk.Label(win, text="", bg=BG, fg=RED, font=FB)
+
+        def _refresh6(*_):
+            try:
+                d6 = _daymap6.get(day_var6.get())
+                if d6 is None:
+                    return
+                data6 = cash_report_data(d6)
+                if data6 is None:
+                    lbl_err6.config(text="تعذر جمع أرقام هذا اليوم — سُجّل السبب "
+                                         "في error_log.txt")
+                    lbl_err6.pack(fill="x", padx=14, pady=4)
+                    return
+                lbl_err6.pack_forget()
+                v_total6.config(text=money(data6["total_sales"]))
+                v_cash6.config(text=money(data6["paid_cash"]))
+                v_credit6.config(text=money(data6["credit_sales"]))
+                v_first6.config(text=money(data6["first_payments"]))
+                v_coll6.config(text=money(data6["collections"]))
+                v_rets6.config(text=money(data6["returns"]))
+                v_exp6.config(text=money(data6["expenses"]))
+                lbl_net6.config(
+                    text=f"منها مبيعات شبكة (جهاز البطاقة): "
+                         f"{money(data6['paid_network'])} — لا تدخل في نقدية الدرج")
+                _exp6 = data6["expected_drawer"]
+                lbl_draw6.config(
+                    text=f"💰 النقدية المتوقعة في الدرج: {money(_exp6)}",
+                    fg=(GREEN if _exp6 >= 0 else RED))
+                lbl_formula6.config(
+                    text=(f"الداخل نقدًا {money(data6['cash_in'])} = المبيعات النقدية "
+                          f"{money(data6['paid_cash'])} + الدفعات الأولى "
+                          f"{money(data6['first_payments'])} + التحصيلات "
+                          f"{money(data6['collections'])}      —      الخارج نقدًا "
+                          f"{money(data6['cash_out'])} = المرتجعات "
+                          f"{money(data6['returns'])} + المصروفات "
+                          f"{money(data6['expenses'])}"))
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+                lbl_err6.config(text="تعذر تحديث الكشف — سُجّل السبب في error_log.txt")
+                lbl_err6.pack(fill="x", padx=14, pady=4)
+        cb6.bind("<<ComboboxSelected>>", _refresh6)
+        _refresh6()
+        place_window(win, 860, 500)
+
+    def show_expenses_window(self):
+        """★ إضافة (حزمة الصندوق والرقابة المالية — الميزة 2): فتح
+        «المصروفات الموثقة» — الطبقة الثانية عند الفتح، زر «تسجيل مصروف»
+        بنافذة صغيرة (مبلغ إلزامي أكبر من صفر + تصنيف من قائمة جاهزة +
+        ملاحظة اختيارية)، وجدول مصروفات الفترة مع الإجمالي وقائمة فترات
+        (اليوم / آخر 7 أيام / آخر 30 يومًا) — وممنوع تعديل أو حذف أي مصروف
+        من الواجهة نهائيًا"""
+        # الطبقة الثانية
+        if not (self.role == ADMIN_ROLE
+                or user_has_permission(self.user_name, "expenses_manage")):
+            b = getattr(self, "nav_buttons", {}).get("expenses")
+            if b is not None:
+                b.pack_forget()   # زر متقادم بعد تبديل المستخدم: يُخفى فورًا
+            messagebox.showwarning("لا تملك صلاحية",
+                "المصروفات تتطلب صلاحية «تسجيل المصروفات وعرضها» — راجع الأدمن")
+            return
+        win = self.register_window(tk.Toplevel(self))
+        win.title("المصروفات الموثقة")
+        win.configure(bg=BG)
+        bar6 = tk.Frame(win, bg=BG)
+        bar6.pack(fill="x", padx=14, pady=(12, 4))
+        lbl_err6 = tk.Label(win, text="", bg=BG, fg=RED, font=FB)
+        lbl_total6 = tk.Label(win, text="", bg=BG, fg=DARK,
+                              font=("Segoe UI", 12, "bold"), anchor="e")
+        frm6, tv6 = self.mk_tree(
+            win, ["التاريخ", "التصنيف", "المبلغ", "الملاحظة", "سُجّل بواسطة"],
+            [150, 130, 110, 250, 120])
+        frm6.pack(fill="both", expand=True, padx=14, pady=(2, 12))
+        config_tree_stripes(tv6)
+
+        def _refresh6(*_):
+            try:
+                if not win.winfo_exists():
+                    return
+                rows6, total6, desc6 = expenses_period_rows(period_var6.get())
+                tv6.delete(*tv6.get_children())
+                for i, r in enumerate(rows6):
+                    tv6.insert("", "end", tags=stripe_tags(i), values=(
+                        (r["created_at"] or "—")[:16], r["category"] or "—",
+                        money(r["amount"]), r["note"] or "", r["username"] or "—"))
+                if not rows6:
+                    tv6.insert("", "end", values=(
+                        f"لا مصروفات مسجلة خلال {desc6}", "—", "—", "", ""))
+                lbl_total6.config(text=f"إجمالي مصروفات {desc6}: {money(total6)}")
+                lbl_err6.pack_forget()
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+                lbl_err6.config(text="تعذر تحميل المصروفات — سُجّل السبب في "
+                                     "error_log.txt")
+                lbl_err6.pack(fill="x", padx=14, pady=4)
+        # شريط الإجراءات فوق الجدول: تسجيل + اختيار الفترة + تحديث
+        self.mk_btn(bar6, "➕ تسجيل مصروف",
+                    lambda: self._expense_add_dialog(_refresh6),
+                    GREEN).pack(side="right", padx=4)
+        tk.Label(bar6, text="عرض الفترة:", bg=BG, fg=GRAY,
+                 font=FB).pack(side="right", padx=(16, 6))
+        period_var6 = tk.StringVar(value="اليوم")
+        cb6 = ttk.Combobox(bar6, textvariable=period_var6, state="readonly",
+                           values=["اليوم", "آخر 7 أيام", "آخر 30 يومًا"],
+                           font=F, width=12)
+        cb6.pack(side="right", ipady=3)
+        cb6.bind("<<ComboboxSelected>>", _refresh6)
+        self.mk_btn(bar6, "🔄 تحديث", _refresh6, "#475569").pack(side="left", padx=4)
+        tk.Label(win, text="مصروف اليوم يظهر فورًا في الجدول ويُخصم في كشف "
+                           "الصندوق — لا تعديل ولا حذف لأي مصروف من هذه النافذة",
+                 bg=BG, fg=GRAY, font=("Segoe UI", 9), anchor="e").pack(
+                     fill="x", padx=14, pady=(0, 2))
+        _refresh6()
+        place_window(win, 880, 520)
+
+    def _expense_add_dialog(self, refresh_cb):
+        """★ إضافة (حزمة الصندوق والرقابة المالية — الميزة 2): نافذة تسجيل
+        مصروف صغيرة — المبلغ إلزامي أكبر من صفر، والتصنيف من قائمة جاهزة
+        حصراً، والملاحظة اختيارية؛ يُسجل المصروف باسم المستخدم الحالي
+        وتاريخه في جدول expenses + سطر تدقيق expense_recorded بنوعه الحرفي
+        من المواصفة، ثم يُحدَّث الجدول فورًا — ولا تعديل ولا حذف أبدًا"""
+        # الطبقة الثانية (دفاع مزدوج مع إخفاء الزر)
+        if not (self.role == ADMIN_ROLE
+                or user_has_permission(self.user_name, "expenses_manage")):
+            messagebox.showwarning("لا تملك صلاحية",
+                "تسجيل المصروفات يتطلب صلاحية «تسجيل المصروفات وعرضها» — "
+                "راجع الأدمن")
+            return
+        try:
+            _ensure_cash_tables()
+        except Exception:
+            pass
+        win = self.register_window(tk.Toplevel(self))
+        win.title("تسجيل مصروف")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+        try:
+            win.transient(self)
+        except Exception:
+            pass
+        card = tk.Frame(win, bg=CARD, highlightbackground=BORDER,
+                        highlightthickness=1)
+        card.pack(fill="both", expand=True, padx=14, pady=12)
+        tk.Label(card, text="💸 تسجيل مصروف", bg=CARD, fg=DARK,
+                 font=FT).pack(pady=(10, 4))
+        grid6 = tk.Frame(card, bg=CARD)
+        grid6.pack(pady=6)
+        tk.Label(grid6, text="المبلغ:", bg=CARD, fg=GRAY,
+                 font=FB).grid(row=0, column=0, sticky="e", padx=8, pady=5)
+        e_amt6 = tk.Entry(grid6, font=F, justify="center", relief="solid",
+                          bd=1, width=18)
+        e_amt6.grid(row=0, column=1, padx=8, pady=5)
+        digits_only_filter(e_amt6)
+        tk.Label(grid6, text="التصنيف:", bg=CARD, fg=GRAY,
+                 font=FB).grid(row=1, column=0, sticky="e", padx=8, pady=5)
+        cat_var6 = tk.StringVar(value=EXPENSE_CATEGORIES[0])
+        cb_cat6 = ttk.Combobox(grid6, textvariable=cat_var6, state="readonly",
+                               values=list(EXPENSE_CATEGORIES), font=F, width=16)
+        cb_cat6.grid(row=1, column=1, padx=8, pady=5)
+        tk.Label(grid6, text="ملاحظة (اختياري):", bg=CARD, fg=GRAY,
+                 font=FB).grid(row=2, column=0, sticky="e", padx=8, pady=5)
+        e_note6 = tk.Entry(grid6, font=F, justify="center", relief="solid",
+                           bd=1, width=18)
+        e_note6.grid(row=2, column=1, padx=8, pady=5)
+        lbl_err6 = tk.Label(card, text="", bg=CARD, fg=RED,
+                            font=("Segoe UI", 9, "bold"))
+        lbl_err6.pack()
+
+        def _save6():
+            # الطبقة الثانية مجددًا داخل مسار التنفيذ نفسه
+            if not (self.role == ADMIN_ROLE
+                    or user_has_permission(self.user_name, "expenses_manage")):
+                messagebox.showwarning("لا تملك صلاحية",
+                    "لا تملك صلاحية تسجيل المصروفات — لم يُسجل شيء", parent=win)
+                return
+            v6 = to_num(e_amt6.get())
+            if v6 is None or v6 <= 0:
+                lbl_err6.config(text="المبلغ غير صحيح — أدخل رقمًا أكبر من صفر")
+                shake_widget(card)
+                return
+            cat6 = cat_var6.get().strip() or "أخرى"
+            note6 = e_note6.get().strip() or None
+            try:
+                now6 = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                with connect() as conn:
+                    conn.execute("INSERT INTO expenses(amount, category, note, "
+                                 "username, created_at) VALUES(?,?,?,?,?)",
+                                 (v6, cat6, note6, CURRENT_USER["name"], now6))
+                audit("expense_recorded",
+                      f"التصنيف: {cat6} | المبلغ: {money(v6)}"
+                      + (f" | ملاحظة: {note6}" if note6 else ""))
+                win.destroy()
+                try:
+                    if refresh_cb is not None:
+                        refresh_cb()
+                except Exception:
+                    pass
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+                messagebox.showerror("خطأ", "تعذر تسجيل المصروف — سُجّل الخطأ في "
+                                     "error_log.txt", parent=win)
+
+        bar_b6 = tk.Frame(card, bg=CARD)
+        bar_b6.pack(fill="x", pady=(4, 10))
+        self.mk_btn(bar_b6, "💾 تسجيل", _save6, GREEN).pack(side="right", padx=6)
+        self.mk_btn(bar_b6, "إلغاء", win.destroy, "#475569").pack(side="right", padx=6)
+        e_amt6.focus_set()
+        place_window(win, 440, 370)
+
+    def open_expense_record_dialog(self):
+        """★ إضافة (ميزة «المصروفات» — زر «تسجيل مصروف» في الشاشة
+        الرئيسية): نافذة صغيرة — المبلغ إلزامي أكبر من صفر، والنوع من
+        القائمة المنسدلة الجديدة (نقل / ضيافة / كهرباء / أجرة توصيل /
+        صيانة / أخرى)، والملاحظة إجبارية بنص هذه المواصفة؛ بعد الحفظ
+        رسالة نجاح وتفريغ الحقول (والنافذة تبقى مفتوحة لتسجيل متتابع
+        سريع)، ويُسجل المصروف باسم مستخدم الجلسة في جدول expenses القائم
+        نفسه (بلا أي تعديل على الجدول) مع سطر تدقيق expense_recorded
+        القائم بنوعه الحرفي، فيُخصم فورًا في كشف الصندوق ضمن «نقد خارج» —
+        والطبقة الثانية عند الفتح وثالثة داخل الحفظ نفسه"""
+        # الطبقة الثانية (دفاع مزدوج مع إخفاء الزر)
+        if not (self.role == ADMIN_ROLE
+                or user_has_permission(self.user_name, "expense_record")):
+            messagebox.showwarning("لا تملك صلاحية",
+                "تسجيل المصروف يتطلب صلاحية «تسجيل مصروف» — راجع الأدمن")
+            return
+        try:
+            _ensure_cash_tables()
+        except Exception:
+            pass
+        win = self.register_window(tk.Toplevel(self))
+        win.title("تسجيل مصروف")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+        try:
+            win.transient(self)
+        except Exception:
+            pass
+        card = tk.Frame(win, bg=CARD, highlightbackground=BORDER,
+                        highlightthickness=1)
+        card.pack(fill="both", expand=True, padx=14, pady=12)
+        tk.Label(card, text="💸 تسجيل مصروف من الدرج", bg=CARD, fg=DARK,
+                 font=FT).pack(pady=(10, 4))
+        grid8 = tk.Frame(card, bg=CARD)
+        grid8.pack(pady=6)
+        tk.Label(grid8, text="المبلغ:", bg=CARD, fg=GRAY,
+                 font=FB).grid(row=0, column=0, sticky="e", padx=8, pady=5)
+        e_amt8 = tk.Entry(grid8, font=F, justify="center", relief="solid",
+                          bd=1, width=18)
+        e_amt8.grid(row=0, column=1, padx=8, pady=5)
+        digits_only_filter(e_amt8)
+        tk.Label(grid8, text="النوع:", bg=CARD, fg=GRAY,
+                 font=FB).grid(row=1, column=0, sticky="e", padx=8, pady=5)
+        type_var8 = tk.StringVar(value=EXPENSE_TYPE_CHOICES[0])
+        cb_type8 = ttk.Combobox(grid8, textvariable=type_var8,
+                                state="readonly",
+                                values=list(EXPENSE_TYPE_CHOICES), font=F,
+                                width=16)
+        cb_type8.grid(row=1, column=1, padx=8, pady=5)
+        tk.Label(grid8, text="الملاحظة (إجبارية):", bg=CARD, fg=GRAY,
+                 font=FB).grid(row=2, column=0, sticky="e", padx=8, pady=5)
+        e_note8 = tk.Entry(grid8, font=F, justify="center", relief="solid",
+                           bd=1, width=18)
+        e_note8.grid(row=2, column=1, padx=8, pady=5)
+        lbl_ok8 = tk.Label(card, text="", bg=CARD, fg=GREEN,
+                           font=("Segoe UI", 10, "bold"))
+        lbl_ok8.pack()
+        lbl_err8 = tk.Label(card, text="", bg=CARD, fg=RED,
+                            font=("Segoe UI", 9, "bold"))
+        lbl_err8.pack()
+
+        def _save8():
+            # الطبقة الثانية مجددًا داخل مسار التنفيذ نفسه
+            if not (self.role == ADMIN_ROLE
+                    or user_has_permission(self.user_name,
+                                           "expense_record")):
+                messagebox.showwarning(
+                    "لا تملك صلاحية",
+                    "لا تملك صلاحية «تسجيل مصروف» — لم يُسجل شيء",
+                    parent=win)
+                return
+            v8 = to_num(e_amt8.get())
+            if v8 is None or v8 <= 0:
+                lbl_ok8.config(text="")
+                lbl_err8.config(text="المبلغ غير صحيح — أدخل رقمًا أكبر من صفر")
+                shake_widget(card)
+                return
+            note8 = e_note8.get().strip()
+            if not note8:
+                lbl_ok8.config(text="")
+                lbl_err8.config(text="الملاحظة إجبارية — اكتب وصفًا موجزًا للمصروف")
+                shake_widget(card)
+                return
+            typ8 = type_var8.get().strip() or "أخرى"
+            try:
+                now8 = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                with connect() as conn:
+                    conn.execute(
+                        "INSERT INTO expenses(amount, category, note, "
+                        "username, created_at) VALUES(?,?,?,?,?)",
+                        (v8, typ8, note8, CURRENT_USER["name"], now8))
+                audit("expense_recorded",
+                      f"النوع: {typ8} | المبلغ: {money(v8)} | ملاحظة: {note8}")
+                # رسالة نجاح وتفريغ الحقول — والنافذة تبقى مفتوحة لتسجيل
+                # مصروف متتابع بسرعة دون فتحها من جديد
+                lbl_err8.config(text="")
+                lbl_ok8.config(text=f"✔ سُجّل المصروف: {money(v8)} ({typ8}) "
+                                    "— يُخصم في كشف الصندوق نقدًا خارج")
+                e_amt8.delete(0, "end")
+                e_note8.delete(0, "end")
+                type_var8.set(EXPENSE_TYPE_CHOICES[0])
+                e_amt8.focus_set()
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+                messagebox.showerror("خطأ", "تعذر تسجيل المصروف — سُجّل "
+                                     "الخطأ في error_log.txt", parent=win)
+
+        bar_b8 = tk.Frame(card, bg=CARD)
+        bar_b8.pack(fill="x", pady=(4, 10))
+        self.mk_btn(bar_b8, "💾 تسجيل", _save8, GREEN).pack(
+            side="right", padx=6)
+        self.mk_btn(bar_b8, "إغلاق", win.destroy, "#475569").pack(
+            side="right", padx=6)
+        e_amt8.focus_set()
+        e_amt8.bind("<Return>", lambda e: _save8())
+        place_window(win, 460, 400)
+
+    def show_quotations_window(self):
+        """★ إضافة (عروض الأسعار): نافذة قائمة العروض — الطبقة الثانية عند
+        الفتح (دفاع مزدوج مع إخفاء الزر)، جدول بكل العروض (رقم العرض /
+        التاريخ / العميل / عدد الأصناف / الإجمالي / البائع / الحالة /
+        رقم الفاتورة بعد التحويل / عمر العرض)، وفلاتر الفترة (باليوم
+        التجاري 05:00 نفسها) والحالة والبائع، والبائع يرى عروضه هو فقط
+        (تطبيقيًا داخل استعلام quotations_list_rows نفسه) والأدمن يرى
+        الكل، وأزرار: عرض جديد / تعديل / تحويل إلى فاتورة / إلغاء (للعروض
+        المفتوحة وحدها — تظهر وتختفي مع تحديد الصف) / نسخة نصية / نسخ
+        للحافظة / تحديث"""
+        # الطبقة الثانية
+        if not (self.role == ADMIN_ROLE
+                or user_has_permission(self.user_name, "quotations_manage")):
+            b = getattr(self, "nav_buttons", {}).get("quotations")
+            if b is not None:
+                b.pack_forget()   # زر متقادم بعد تبديل المستخدم: يُخفى فورًا
+            messagebox.showwarning("لا تملك صلاحية",
+                "عروض الأسعار تتطلب صلاحية «عروض الأسعار» — راجع الأدمن")
+            return
+        _is_adm9 = (self.role == ADMIN_ROLE)
+        win = self.register_window(tk.Toplevel(self))
+        win.title("عروض الأسعار")
+        win.configure(bg=BG)
+        # ---------- شريط الفلاتر ----------
+        bar9 = tk.Frame(win, bg=BG)
+        bar9.pack(fill="x", padx=14, pady=(12, 2))
+        tk.Label(bar9, text="الفترة:", bg=BG, fg=DARK,
+                 font=FB).pack(side="right", padx=(0, 4))
+        period_var9 = tk.StringVar(value="كل العروض")
+        cb_p9 = ttk.Combobox(bar9, textvariable=period_var9, state="readonly",
+                             values=["اليوم التجاري", "أمس (تجاري)",
+                                     "آخر 7 أيام", "هذا الشهر", "كل العروض"],
+                             font=F, width=14, justify="center")
+        cb_p9.pack(side="right", padx=4)
+        add_tip(cb_p9, "فترة القائمة باليوم التجاري 05:00 نفسها — كل عرض "
+                       "يُنسب ليومه التجاري من وقته الكامل")
+        tk.Label(bar9, text="الحالة:", bg=BG, fg=DARK,
+                 font=FB).pack(side="right", padx=(14, 4))
+        status_var9 = tk.StringVar(value="الكل")
+        cb_st9 = ttk.Combobox(bar9, textvariable=status_var9, state="readonly",
+                              values=["الكل"] + list(QUOTATION_STATUSES.values()),
+                              font=F, width=12, justify="center")
+        cb_st9.pack(side="right", padx=4)
+        seller_var9 = tk.StringVar(value="كل البائعين")
+        cb_s9 = None
+        if _is_adm9:
+            tk.Label(bar9, text="البائع:", bg=BG, fg=DARK,
+                     font=FB).pack(side="right", padx=(14, 4))
+            _sellers9 = {"كل البائعين"} | set(active_users_list())
+            try:
+                _ensure_quotations_table()
+                with connect() as conn:
+                    for r9 in conn.execute(
+                            "SELECT DISTINCT username FROM quotations "
+                            "WHERE username IS NOT NULL"):
+                        if (r9[0] or "").strip():
+                            _sellers9.add(r9[0])
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+            cb_s9 = ttk.Combobox(bar9, textvariable=seller_var9,
+                                 state="readonly",
+                                 values=sorted(_sellers9), font=F, width=13,
+                                 justify="center")
+            cb_s9.pack(side="right", padx=4)
+            add_tip(cb_s9, "تصفية القائمة بالبائع — الأدمن وحده يراها "
+                           "(البائع يرى عروضه هو فقط)")
+        else:
+            tk.Label(bar9, text="(تعرض عروضك أنت فقط)", bg=BG, fg=GRAY,
+                     font=("Segoe UI", 9)).pack(side="right", padx=(10, 0))
+        # ---------- شريط الأزرار ----------
+        act9 = tk.Frame(win, bg=BG)
+        act9.pack(fill="x", padx=14, pady=4)
+        self.mk_btn(act9, "➕ عرض سعر جديد",
+                    lambda: self._quote_editor_dialog(None, refresh),
+                    GREEN).pack(side="right", padx=4)
+        # أزرار العرض المحدد (تعديل/تحويل/إلغاء): لا تُحزم إلا عند تحديد
+        # صف مفتوح — فلا يظهر خيار التحويل لعرض ملغي أو محول أبدًا
+        host_e9 = tk.Frame(act9, bg=BG)
+        host_e9.pack(side="right", padx=2)
+        b_edit9 = self.mk_btn(host_e9, "✏️ تعديل",
+                              lambda: _edit_selected(), ORANGE)
+        host_c9 = tk.Frame(act9, bg=BG)
+        host_c9.pack(side="right", padx=2)
+        b_conv9 = self.mk_btn(host_c9, "🧾 تحويل إلى فاتورة",
+                              lambda: _convert_selected(), ACCENT)
+        host_x9 = tk.Frame(act9, bg=BG)
+        host_x9.pack(side="right", padx=2)
+        b_canc9 = self.mk_btn(host_x9, "❌ إلغاء العرض",
+                              lambda: _cancel_selected(), RED)
+        add_tip(b_edit9, "تعديل عرض مفتوح بنفس رقمه — دون استهلاك رقم جديد")
+        add_tip(b_conv9, "فتح شاشة الفاتورة معبأة بأصناف العرض وعميله — "
+                         "إتمام البيع بكل القواعد القائمة، وبعد نجاح "
+                         "الحفظ يصبح العرض «محولًا لفاتورة» برقمها")
+        add_tip(b_canc9, "إلغاء عرض مفتوح بعد تأكيد — يصبح ملغيًا ولا يمكن "
+                         "تحويله أبدًا")
+        self.mk_btn(act9, "💾 نسخة نصية",
+                    lambda: _save_text_selected(), "#0d9488").pack(
+                        side="left", padx=4)
+        add_tip(act9.winfo_children()[-1], "حفظ نص العرض منسقًا بترميز utf-8 "
+                                           "في مجلد reports بجانب قاعدة "
+                                           "البيانات")
+        self.mk_btn(act9, "📋 نسخ للحافظة",
+                    lambda: _copy_text_selected(), "#475569").pack(
+                        side="left", padx=4)
+        add_tip(act9.winfo_children()[-1], "نسخ نص العرض نفسه إلى الحافظة "
+                                           "لتسليمه للعميل فورًا")
+        self.mk_btn(act9, "🔄 تحديث", lambda: refresh(), "#475569").pack(
+            side="left", padx=4)
+        # ---------- الجدول ----------
+        lbl_err9 = tk.Label(win, text="", bg=BG, fg=RED, font=FB)
+        lbl_cnt9 = tk.Label(win, text="", bg=BG, fg=GRAY,
+                            font=("Segoe UI", 10, "bold"), anchor="e")
+        lbl_cnt9.pack(fill="x", padx=14)
+        frm9, tv9 = self.mk_tree(
+            win, ["رقم العرض", "التاريخ", "العميل", "الأصناف", "الإجمالي",
+                  "البائع", "الحالة", "الفاتورة", "العمر"],
+            [78, 130, 160, 60, 110, 100, 100, 75, 85])
+        tv9.column("الإجمالي", anchor="e")
+        tv9.column("العميل", anchor="w")
+        config_tree_stripes(tv9)
+        try:
+            tv9.tag_configure("q_conv", foreground=GREEN)
+            tv9.tag_configure("q_canc", foreground=RED)
+        except Exception:
+            pass
+        frm9.pack(fill="both", expand=True, padx=14, pady=(2, 10))
+        add_tip(tv9, "كل العروض حسب الفلاتر — الأزرار الخضراء/البرتقالية "
+                     "للعروض المفتوحة وحدها (اختر صفًا مفتوحًا لتظهر)")
+        _rows_map9 = {}
+
+        def _sel_row9():
+            _sel9 = tv9.selection()
+            if not _sel9:
+                return None
+            return _rows_map9.get(_sel9[0])
+
+        def _sync_action_buttons(_e=None):
+            """إظهار أزرار (تعديل/تحويل/إلغاء) للصف المفتوح المحدد فقط —
+            فلا يظهر خيار التحويل لعرض ملغي أو محول أبدًا"""
+            try:
+                r9 = _sel_row9()
+                if r9 is not None and r9["status"] == "open":
+                    b_edit9.pack(side="right", padx=2)
+                    b_conv9.pack(side="right", padx=2)
+                    b_canc9.pack(side="right", padx=2)
+                else:
+                    b_edit9.pack_forget()
+                    b_conv9.pack_forget()
+                    b_canc9.pack_forget()
+            except Exception:
+                pass
+        tv9.bind("<<TreeviewSelect>>", _sync_action_buttons)
+
+        def refresh():
+            """الطبقة الثانية: فحص الصلاحية أول كل قراءة — ثم تنفيذ الفلاتر
+            (الفترة باليوم التجاري، والحالة، والبائع للأدمن وحده)"""
+            if not (self.role == ADMIN_ROLE
+                    or user_has_permission(self.user_name,
+                                           "quotations_manage")):
+                lbl_err9.config(text="🔒 لا تملك صلاحية «عروض الأسعار» — "
+                                     "راجع الأدمن")
+                lbl_err9.pack(fill="x", padx=14, pady=4)
+                tv9.delete(*tv9.get_children())
+                _rows_map9.clear()
+                _sync_action_buttons()
+                return
+            try:
+                rows9 = quotations_list_rows(
+                    self.user_name, period_var9.get(), status_var9.get(),
+                    (seller_var9.get() if _is_adm9 else "كل البائعين"))
+                if rows9 is None:
+                    lbl_err9.config(text="🔒 لا تملك صلاحية «عروض الأسعار» "
+                                         "— راجع الأدمن")
+                    lbl_err9.pack(fill="x", padx=14, pady=4)
+                    tv9.delete(*tv9.get_children())
+                    _rows_map9.clear()
+                    _sync_action_buttons()
+                    return
+                lbl_err9.pack_forget()
+                tv9.delete(*tv9.get_children())
+                _rows_map9.clear()
+                for i9, r9 in enumerate(rows9):
+                    _tags9 = stripe_tags(i9) + (
+                        ("q_conv",) if r9["status"] == "converted"
+                        else (("q_canc",) if r9["status"] == "cancelled"
+                              else ()))
+                    _iid9 = tv9.insert(
+                        "", "end", tags=_tags9, values=(
+                            r9["quote_no"] or "—",
+                            (r9["created_at"] or "—")[:16],
+                            (r9["customer_text"] or "").strip() or "—",
+                            str(r9["count"]), money(r9["total"]),
+                            r9["username"] or "—", r9["status_ar"],
+                            (r9["converted_invoice_no"] or "—"),
+                            ("اليوم" if r9["age"] == 0
+                             else f"منذ {r9['age']} يوم")))
+                    _rows_map9[_iid9] = r9
+                if not rows9:
+                    tv9.insert("", "end", values=(
+                        "لا عروض في هذه الفترة", "—", "—", "—", "—", "—",
+                        "—", "—", "—"))
+                _tot9 = sum(r9["total"] for r9 in rows9)
+                lbl_cnt9.config(
+                    text=f"عدد العروض: {len(rows9)} — إجمالي قيم العروض: "
+                         f"{money(_tot9)}")
+                _sync_action_buttons()
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+                lbl_err9.config(text="تعذر تحميل العروض — سُجّل السبب في "
+                                     "error_log.txt")
+                lbl_err9.pack(fill="x", padx=14, pady=4)
+
+        def _edit_selected():
+            r9 = _sel_row9()
+            if r9 is None:
+                messagebox.showwarning("لا تحديد",
+                    "اختر عرضًا من الجدول أولًا", parent=win)
+                return
+            if r9["status"] != "open":
+                messagebox.showwarning("غير متاح",
+                    "التعديل متاح للعروض المفتوحة فقط — حالة هذا العرض: "
+                    + r9["status_ar"], parent=win)
+                return
+            self._quote_editor_dialog(r9, refresh)
+
+        def _convert_selected():
+            r9 = _sel_row9()
+            if r9 is None:
+                messagebox.showwarning("لا تحديد",
+                    "اختر عرضًا من الجدول أولًا", parent=win)
+                return
+            if r9["status"] != "open":
+                messagebox.showwarning("غير متاح",
+                    "التحويل متاح للعروض المفتوحة فقط — حالة هذا العرض: "
+                    + r9["status_ar"], parent=win)
+                return
+            self._quote_convert_action(r9, win)
+
+        def _cancel_selected():
+            r9 = _sel_row9()
+            if r9 is None:
+                messagebox.showwarning("لا تحديد",
+                    "اختر عرضًا من الجدول أولًا", parent=win)
+                return
+            if r9["status"] != "open":
+                messagebox.showwarning("غير متاح",
+                    "الإلغاء متاح للعروض المفتوحة فقط — حالة هذا العرض: "
+                    + r9["status_ar"], parent=win)
+                return
+            if not messagebox.askyesno(
+                    "تأكيد الإلغاء",
+                    "هل تريد إلغاء عرض السعر رقم "
+                    + str(r9["quote_no"] or "—") + "؟\n\nالعميل: "
+                    + ((r9["customer_text"] or "").strip() or "—")
+                    + "\nالإجمالي: " + money(r9["total"])
+                    + "\n\nسيصبح العرض «ملغيًا» ولا يمكن تحويله إلى فاتورة "
+                      "أبدًا", parent=win):
+                return
+            ok9, msg9 = quotation_cancel_row(self.user_name, r9["id"])
+            if ok9:
+                try:
+                    audit("quotation_cancelled",
+                          f"عرض رقم {r9['quote_no']} | العميل: "
+                          f"{(r9['customer_text'] or '').strip() or '—'} | "
+                          f"الإجمالي: {money(r9['total'])}")
+                except Exception:
+                    pass
+                refresh()
+            else:
+                messagebox.showwarning("تعذر الإلغاء", msg9, parent=win)
+
+        def _save_text_selected():
+            r9 = _sel_row9()
+            if r9 is None:
+                messagebox.showwarning("لا تحديد",
+                    "اختر عرضًا من الجدول أولًا", parent=win)
+                return
+            ok9, msg9 = quotation_save_text_file(self.user_name, r9)
+            if ok9:
+                messagebox.showinfo("تم الحفظ",
+                    "حُفظت نسخة العرض النصية بنجاح في:\n" + msg9,
+                    parent=win)
+            else:
+                messagebox.showerror("تعذر الحفظ", msg9, parent=win)
+
+        def _copy_text_selected():
+            r9 = _sel_row9()
+            if r9 is None:
+                messagebox.showwarning("لا تحديد",
+                    "اختر عرضًا من الجدول أولًا", parent=win)
+                return
+            try:
+                self.clipboard_clear()
+                self.clipboard_append(quotation_build_text(r9))
+                messagebox.showinfo("تم النسخ",
+                    "نُسخ نص عرض السعر رقم " + str(r9["quote_no"] or "—")
+                    + " إلى الحافظة", parent=win)
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+                messagebox.showerror("خطأ", "تعذر النسخ للحافظة — سُجّل السبب "
+                                     "في error_log.txt", parent=win)
+
+        for cb9 in (cb_p9, cb_st9):
+            cb9.bind("<<ComboboxSelected>>", lambda e: refresh())
+        if cb_s9 is not None:
+            cb_s9.bind("<<ComboboxSelected>>", lambda e: refresh())
+        # تسجيل دالة التحديث في سجل الاستدعاءات — يحدّث القائمة فورًا بعد
+        # نجاح تحويل أي عرض إلى فاتورة من شاشة الفاتورة نفسها
+        try:
+            self._quot_refresh_cbs.append(refresh)
+            win.bind("<Destroy>", lambda e: (
+                (self._quot_refresh_cbs.remove(refresh)
+                 if refresh in self._quot_refresh_cbs else None)), add="+")
+        except Exception:
+            pass
+        refresh()
+        place_window(win, 1000, 620)
+
+    def _quote_editor_dialog(self, existing, refresh_cb):
+        """★ إضافة (عروض الأسعار): شاشة تحضير عرض سعر — عميل مسجَّل من
+        القائمة (اختياري) أو اسم وهاتف نصيان لعميل غير مسجَّل (بلا إنشاء
+        سجل عميل جديد أبدًا)، وإضافة أصناف (اسم/كمية/سعر وحدة) بنفس أسلوب
+        شاشة الفاتورة مع حذف صف وتعديله بنقرة مزدوجة، وإجمالي كبير يتحدث
+        تلقائيًا، وتلميح «آخر سعر بيع» تحت حقل الصنف لمن يملك last_price_view
+        فقط بنفس شرطه ووظيفته، ولا حقل خصم (الخصم وقت البيع بقواعده) —
+        والحفظ بتحقق عربي (صنف واحد على الأقل باسم وسعر صحيحين) برقم مستقل
+        للجديد وبنفس الرقم للتعديل"""
+        # الطبقة الثانية (دفاع مزدوج مع إخفاء الزر)
+        if not (self.role == ADMIN_ROLE
+                or user_has_permission(self.user_name, "quotations_manage")):
+            messagebox.showwarning("لا تملك صلاحية",
+                "عروض الأسعار تتطلب صلاحية «عروض الأسعار» — راجع الأدمن")
+            return
+        try:
+            _ensure_quotations_table()
+        except Exception:
+            pass
+        _edit9 = (existing is not None)
+        win = self.register_window(tk.Toplevel(self))
+        win.title(("تعديل عرض السعر رقم " + str(existing["quote_no"] or "—"))
+                  if _edit9 else "عرض سعر جديد")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+        try:
+            win.transient(self)
+        except Exception:
+            pass
+        card = tk.Frame(win, bg=CARD, highlightbackground=BORDER,
+                        highlightthickness=1)
+        card.pack(fill="both", expand=True, padx=14, pady=12)
+        tk.Label(card, text=("🧾 تعديل عرض السعر رقم "
+                             + str(existing["quote_no"] or "—"))
+                  if _edit9 else "🧾 عرض سعر جديد",
+                 bg=CARD, fg=DARK, font=FT).pack(pady=(10, 2))
+        tk.Label(card, text="عرض السعر ورقة تسليم للعميل — لا يُنشئ فاتورة "
+                            "ولا يحرك المخزون ولا يدخل الحسابات",
+                 bg=CARD, fg=GRAY, font=("Segoe UI", 9)).pack(pady=(0, 4))
+        grid9 = tk.Frame(card, bg=CARD)
+        grid9.pack(pady=4)
+        # ---------- العميل ----------
+        _cmap9 = {}
+        try:
+            _custs9 = customers_all()
+            for c9 in _custs9:
+                _cmap9[c9["name"]] = c9
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+            _custs9 = []
+        tk.Label(grid9, text="العميل (اختياري):", bg=CARD, fg=GRAY,
+                 font=FB).grid(row=0, column=0, sticky="e", padx=8, pady=5)
+        cb_cust9 = ttk.Combobox(grid9, font=F, width=22,
+                                values=[c9["name"] for c9 in _custs9])
+        cb_cust9.grid(row=0, column=1, padx=8, pady=5)
+        add_tip(cb_cust9, "اختر عميلًا مسجلًا من القائمة أو اكتب اسمًا حرًّا "
+                          "لعميل غير مسجل — لا يُنشئ سجل عميل جديد")
+        tk.Label(grid9, text="الهاتف (اختياري):", bg=CARD, fg=GRAY,
+                 font=FB).grid(row=1, column=0, sticky="e", padx=8, pady=5)
+        e_phone9 = tk.Entry(grid9, font=F, justify="center", relief="solid",
+                            bd=1, width=22)
+        e_phone9.grid(row=1, column=1, padx=8, pady=5)
+
+        def _cust_picked9(_e=None):
+            try:
+                c9 = _cmap9.get(cb_cust9.get())
+                if c9 is not None and (c9["phone"] or "").strip():
+                    e_phone9.delete(0, "end")
+                    e_phone9.insert(0, str(c9["phone"]).strip())
+            except Exception:
+                pass
+        cb_cust9.bind("<<ComboboxSelected>>", _cust_picked9)
+        # ---------- الأصناف (بنفس أسلوب شاشة الفاتورة) ----------
+        tk.Label(grid9, text="اسم الصنف:", bg=CARD, fg=GRAY,
+                 font=FB).grid(row=2, column=0, sticky="e", padx=8, pady=5)
+        cb_item9 = ttk.Combobox(grid9, font=F, width=22)
+        cb_item9.grid(row=2, column=1, padx=8, pady=5)
+        try:
+            with connect() as conn:
+                cb_item9["values"] = [r9[0] for r9 in conn.execute(
+                    "SELECT DISTINCT item_name FROM operations "
+                    "ORDER BY item_name")]
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+        tk.Label(grid9, text="الكمية:", bg=CARD, fg=GRAY,
+                 font=FB).grid(row=3, column=0, sticky="e", padx=8, pady=5)
+        e_qty9 = tk.Entry(grid9, font=F, justify="center", relief="solid",
+                          bd=1, width=22)
+        e_qty9.grid(row=3, column=1, padx=8, pady=5)
+        digits_only_filter(e_qty9)
+        tk.Label(grid9, text="سعر الوحدة:", bg=CARD, fg=GRAY,
+                 font=FB).grid(row=4, column=0, sticky="e", padx=8, pady=5)
+        e_price9 = tk.Entry(grid9, font=F, justify="center", relief="solid",
+                            bd=1, width=22)
+        e_price9.grid(row=4, column=1, padx=8, pady=5)
+        digits_only_filter(e_price9)
+        # تلميح «آخر سعر بيع» — بنفس شرطه القائم حرفيًا: لا يُبنى أصلًا لمن
+        # لا يملك last_price_view (إخفاء لا تعطيل)، ويتحدث بنفس مشغلات
+        # تلميح شاشة الفاتورة (خروج المؤشر/Enter/اختيار من القائمة) عبر
+        # last_price_find القائمة نفسها بفحصها الداخلي الثاني
+        lbl_lp9 = None
+        if user_has_permission(self.user_name, "last_price_view"):
+            lbl_lp9 = tk.Label(card, text="", bg=CARD, fg=GRAY,
+                               font=("Segoe UI", 10, "bold"), anchor="e",
+                               justify="right")
+            lbl_lp9.pack(fill="x", padx=(60, 10))
+
+            def _lp_upd9():
+                try:
+                    if not user_has_permission(CURRENT_USER["name"],
+                                               "last_price_view"):
+                        return
+                    _t9 = cb_item9.get().strip()
+                    if not _t9:
+                        lbl_lp9.config(text="", fg=GRAY)
+                        return
+                    res9 = last_price_find(CURRENT_USER["name"], _t9)
+                    if res9["status"] == "found":
+                        _r9 = res9["row"]
+                        lbl_lp9.config(
+                            text=f"آخر سعر بيع: {money(_r9['price'])} — "
+                                 f"بتاريخ {_r9['when']} — العميل: "
+                                 f"{_r9['customer'] or 'بدون اسم'}",
+                            fg=ACCENT)
+                    elif res9["status"] == "notfound":
+                        lbl_lp9.config(text="لا يوجد سجل بيع سابق لهذا الصنف",
+                                       fg=GRAY)
+                    else:
+                        lbl_lp9.config(text="", fg=GRAY)
+                except Exception:
+                    pass
+            cb_item9.bind("<FocusOut>", lambda e: _lp_upd9())
+            cb_item9.bind("<Return>", lambda e: _lp_upd9(), add="+")
+            cb_item9.bind("<<ComboboxSelected>>", lambda e: _lp_upd9(), add="+")
+        addrow9 = tk.Frame(card, bg=CARD)
+        addrow9.pack(fill="x", pady=(2, 2))
+        self.mk_btn(addrow9, "➕ إضافة إلى العرض",
+                    lambda: _add_item9(), GREEN).pack(side="right", padx=6)
+        lbl_stat9 = tk.Label(addrow9, text="", bg=CARD, fg=GREEN, font=FB)
+        lbl_stat9.pack(side="right", padx=10)
+        # جدول الأصناف + الإجمالي الكبير
+        frm_i9, tv_i9 = self.mk_tree(
+            card, ["الصنف", "الكمية", "سعر الوحدة", "الإجمالي"],
+            [240, 80, 110, 120])
+        tv_i9.column("الإجمالي", anchor="e")
+        config_tree_stripes(tv_i9)
+        frm_i9.pack(fill="both", expand=True, padx=14, pady=4)
+        add_tip(tv_i9, "أصناف العرض — نقر مزدوج على أي صف لتعديله بالكامل")
+        lbl_tot9 = tk.Label(card, text="الإجمالي: 0.00", bg=CARD, fg=ACCENT,
+                            font=FV)
+        lbl_tot9.pack(pady=(2, 2))
+        lbl_err9 = tk.Label(card, text="", bg=CARD, fg=RED,
+                            font=("Segoe UI", 9, "bold"))
+        lbl_err9.pack()
+        items9 = []
+        if _edit9:
+            items9 = [dict(i9) for i9 in (existing.get("items") or [])]
+            if (existing.get("customer_text") or "").strip():
+                _ct9 = str(existing["customer_text"])
+                cb_cust9.set(_ct9.split(" — هاتف:")[0].strip())
+                if " — هاتف:" in _ct9:
+                    e_phone9.delete(0, "end")
+                    e_phone9.insert(0, _ct9.split(" — هاتف:", 1)[1].strip())
+
+        def _refresh_items_view9():
+            tv_i9.delete(*tv_i9.get_children())
+            for i9, it9 in enumerate(items9):
+                tv_i9.insert("", "end", iid=str(i9), tags=stripe_tags(i9),
+                             values=(it9["item"], f'{it9["qty"]:g}',
+                                     money(it9["price"]),
+                                     money(it9["qty"] * it9["price"])))
+            _t9 = sum(i9["qty"] * i9["price"] for i9 in items9)
+            lbl_tot9.config(text="الإجمالي: " + money(_t9))
+
+        def _add_item9():
+            _nm9 = cb_item9.get().strip()
+            if not _nm9:
+                lbl_err9.config(text="اكتب اسم الصنف أولًا")
+                shake_widget(card)
+                return
+            _q9 = to_num(e_qty9.get())
+            if _q9 is None or _q9 <= 0:
+                lbl_err9.config(text="الكمية غير صحيحة — أدخل رقمًا أكبر من صفر")
+                shake_widget(card)
+                return
+            _p9 = to_num(e_price9.get())
+            if _p9 is None or _p9 < 0:
+                lbl_err9.config(text="السعر غير صحيح — أدخل رقمًا صحيحًا")
+                shake_widget(card)
+                return
+            lbl_err9.config(text="")
+            items9.append({"item": _nm9, "qty": _q9, "price": _p9})
+            cb_item9.set("")
+            e_qty9.delete(0, "end")
+            e_price9.delete(0, "end")
+            if lbl_lp9 is not None:
+                lbl_lp9.config(text="", fg=GRAY)
+            cb_item9.focus_set()
+            _refresh_items_view9()
+            lbl_stat9.config(text=f"✔ أُضيف: {_nm9}", fg=GREEN)
+
+        def _del_item9():
+            _sel9 = tv_i9.selection()
+            if not _sel9:
+                messagebox.showinfo("تنبيه", "اختر صنفًا من العرض أولًا",
+                                    parent=win)
+                return
+            _i9 = int(_sel9[0])
+            if 0 <= _i9 < len(items9):
+                items9.pop(_i9)
+                _refresh_items_view9()
+
+        def _edit_item9():
+            _sel9 = tv_i9.selection()
+            if not _sel9:
+                messagebox.showinfo("تنبيه", "انقر مرتين على الصف لتعديله "
+                                    "أو اختره أولًا", parent=win)
+                return
+            _i9 = int(_sel9[0])
+            if not (0 <= _i9 < len(items9)):
+                return
+            _it9 = items9[_i9]
+            d9 = self.register_window(tk.Toplevel(win))
+            d9.title("تعديل صنف العرض")
+            d9.configure(bg=BG)
+            d9.resizable(False, False)
+            try:
+                d9.transient(win)
+            except Exception:
+                pass
+            dc9 = tk.Frame(d9, bg=CARD, highlightbackground=BORDER,
+                           highlightthickness=1)
+            dc9.pack(fill="both", expand=True, padx=12, pady=10)
+            tk.Label(dc9, text="✏️ تعديل صنف العرض", bg=CARD, fg=DARK,
+                     font=FT).pack(pady=(8, 2))
+            g9 = tk.Frame(dc9, bg=CARD)
+            g9.pack(pady=4)
+            _de9 = {}
+            for _r9, (_lbl9, _key9, _val9) in enumerate([
+                    ("اسم الصنف:", "item", _it9["item"]),
+                    ("الكمية:", "qty", f'{_it9["qty"]:g}'),
+                    ("سعر الوحدة:", "price", f'{_it9["price"]:g}')]):
+                tk.Label(g9, text=_lbl9, bg=CARD, fg=GRAY,
+                         font=FB).grid(row=_r9, column=0, sticky="e",
+                                       padx=8, pady=4)
+                _e9 = tk.Entry(g9, font=F, justify="center", relief="solid",
+                               bd=1, width=20)
+                _e9.grid(row=_r9, column=1, padx=8, pady=4)
+                _e9.insert(0, _val9)
+                if _key9 != "item":
+                    digits_only_filter(_e9)
+                _de9[_key9] = _e9
+
+            def _apply9():
+                _nm9 = _de9["item"].get().strip()
+                _q9 = to_num(_de9["qty"].get())
+                _p9 = to_num(_de9["price"].get())
+                if not _nm9 or _q9 is None or _q9 <= 0 or _p9 is None or _p9 < 0:
+                    messagebox.showwarning("تنبيه",
+                        "قيم غير صحيحة — الاسم مطلوب والكمية أكبر من صفر "
+                        "والسعر رقم صحيح", parent=d9)
+                    return
+                items9[_i9] = {"item": _nm9, "qty": _q9, "price": _p9}
+                d9.destroy()
+                _refresh_items_view9()
+            bb9 = tk.Frame(dc9, bg=CARD)
+            bb9.pack(fill="x", pady=(4, 8))
+            self.mk_btn(bb9, "💾 حفظ التعديل", _apply9, GREEN).pack(
+                side="right", padx=6)
+            self.mk_btn(bb9, "إلغاء", d9.destroy, "#475569").pack(
+                side="right", padx=6)
+            place_window(d9, 360, 300)
+
+        tv_i9.bind("<Double-1>", lambda e: _edit_item9())
+        b_del_row9 = self.mk_btn(addrow9, "🗑 حذف المحدد",
+                                 lambda: _del_item9(), RED)
+        b_del_row9.pack(side="left", padx=6)
+        add_tip(b_del_row9, "حذف الصنف المحدد من العرض")
+
+        def _save9():
+            # الطبقة الثانية مجددًا داخل مسار التنفيذ نفسه
+            if not (self.role == ADMIN_ROLE
+                    or user_has_permission(self.user_name,
+                                           "quotations_manage")):
+                messagebox.showwarning("لا تملك صلاحية",
+                    "لا تملك صلاحية «عروض الأسعار» — لم يُحفظ شيء",
+                    parent=win)
+                return
+            if not items9:
+                lbl_err9.config(text="أضف صنفًا واحدًا على الأقل إلى العرض "
+                                     "قبل الحفظ")
+                shake_widget(card)
+                return
+            _cid9 = None
+            _c9 = _cmap9.get(cb_cust9.get())
+            if _c9 is not None:
+                _cid9 = _c9["id"]
+            _cname9 = cb_cust9.get().strip()
+            _cphone9 = e_phone9.get().strip()
+            _ctext9 = (_cname9 if not _cphone9
+                       else f"{_cname9} — هاتف: {_cphone9}") if _cname9 else ""
+            if _edit9:
+                ok9, msg9 = quotation_update_row(
+                    self.user_name, existing["id"], _cid9, _ctext9, items9)
+            else:
+                ok9, msg9 = quotation_save_new(
+                    self.user_name, _cid9, _ctext9, items9)
+            if not ok9:
+                lbl_err9.config(text=msg9)
+                shake_widget(card)
+                return
+            try:
+                audit("quotation_updated" if _edit9 else "quotation_created",
+                      f"عرض رقم {msg9} | العميل: {_ctext9 or '—'} | "
+                      f"{len(items9)} صنف | الإجمالي: "
+                      f"{money(sum(i9['qty'] * i9['price'] for i9 in items9))}"
+                      + (" (تعديل بنفس الرقم)" if _edit9 else ""))
+            except Exception:
+                pass
+            messagebox.showinfo(
+                "تم",
+                ("حُدّث عرض السعر رقم " + str(msg9)
+                 + " بنفس رقمه — لم يُستهلك رقم جديد")
+                if _edit9 else
+                ("حُفظ عرض السعر برقم " + str(msg9) + " — سجّله لتسليمه "
+                 "للعميل"), parent=win)
+            win.destroy()
+            try:
+                if refresh_cb is not None:
+                    refresh_cb()
+            except Exception:
+                pass
+
+        bar_b9 = tk.Frame(card, bg=CARD)
+        bar_b9.pack(fill="x", pady=(4, 10))
+        self.mk_btn(bar_b9, "💾 حفظ العرض", _save9, GREEN).pack(
+            side="right", padx=6)
+        self.mk_btn(bar_b9, "إلغاء", win.destroy, "#475569").pack(
+            side="right", padx=6)
+        _refresh_items_view9()
+        cb_item9.focus_set()
+        place_window(win, 520, 640)
+
+    def _quote_convert_action(self, row, parent_win=None):
+        """★ إضافة (عروض الأسعار): تحويل عرض مفتوح إلى فاتورة — الطبقة
+        الثانية أولًا ثم قراءة حية (المفتوح وحده)، وشاشة الفاتورة تُفتح
+        معبأة بالأصناف والعميل عبر نقطة الدخول الجديدة show_invoice_prefilled
+        (يمكن للبائع تعديل ما يريد قبل الإتمام)، وإتمام البيع يمر حتمًا
+        بكل القواعد القائمة دون أي تجاوز — والعرض لا يُعلَّم «محولًا» إلا
+        بعد نجاح حفظ الفاتورة فعليًا من خطاف النجاح داخل save_invoice"""
+        # الطبقة الثانية
+        if not (self.role == ADMIN_ROLE
+                or user_has_permission(self.user_name, "quotations_manage")):
+            messagebox.showwarning("لا تملك صلاحية",
+                "لا تملك صلاحية «عروض الأسعار» — لم يُنفذ شيء",
+                parent=parent_win)
+            return
+        _fresh9 = quotation_get_row(self.user_name, row["id"])
+        if _fresh9 is None:
+            messagebox.showwarning("غير متاح",
+                "العرض غير موجود (أو ليس من عروضك)", parent=parent_win)
+            return
+        if _fresh9["status"] != "open":
+            messagebox.showwarning("غير متاح",
+                "التحويل متاح للعروض المفتوحة فقط — حالة هذا العرض: "
+                + _fresh9["status_ar"], parent=parent_win)
+            return
+        if not _fresh9["items"]:
+            messagebox.showwarning("عرض فارغ",
+                "لا أصناف في هذا العرض — عدّله وأضف الأصناف أولًا",
+                parent=parent_win)
+            return
+        # سلة قائمة بالفعل؟ استئذان قبل الاستبدال (لا تُمس سلة البائع بصمت)
+        if getattr(self, "cart", None):
+            if not messagebox.askyesno(
+                    "استبدال السلة",
+                    "السلة الحالية تحتوي " + str(len(self.cart))
+                    + " صنفًا غير محفوظ.\nهل تستبدلها بأصناف عرض السعر رقم "
+                    + str(_fresh9["quote_no"] or "—") + "؟",
+                    parent=parent_win):
+                return
+        _items9 = [{"item": i9["item"], "qty": float(i9["qty"]),
+                    "price": float(i9["price"]),
+                    "total": float(i9["qty"]) * float(i9["price"]),
+                    "type": "نقداً", "orig_id": None, "reason": "",
+                    "note": ""} for i9 in _fresh9["items"]]
+        self._pending_quote = {"id": _fresh9["id"],
+                               "quote_no": _fresh9["quote_no"]}
+        self.show_invoice_prefilled(_items9,
+                                    (_fresh9["customer_text"] or "").strip())
+        messagebox.showinfo(
+            "تحويل إلى فاتورة",
+            "فُتحت شاشة الفاتورة معبأة بأصناف عرض السعر رقم "
+            + str(_fresh9["quote_no"] or "—") + " وعميله.\n\nعدّل ما تريد ثم "
+            "أتمم البيع بكل القواعد القائمة — وبعد نجاح حفظ الفاتورة يصبح "
+            "العرض «محولًا لفاتورة» ويُسجَّل رقم الفاتورة عليه تلقائيًا",
+            parent=parent_win)
+
+    def show_invoice_prefilled(self, items, customer_text=""):
+        """★ إضافة (عروض الأسعار): نقطة دخول جديدة كليًا — فتح شاشة
+        الفاتورة القائمة معبأة مسبقًا بقائمة أصناف جاهزة وعميل نصي، دون
+        أي تغيير في سلوك الفتح العادي (show_invoice نفسها لم تُمس بحرف):
+        نفس الصفحة ونفس تحديث قائمة الأصناف، ثم تعبئة حقل العميل واستبدال
+        السلة بالأصناف المعطاة وإعادة رسم الجدول والإجمالي — والتحقق من
+        صحة كل صنف كما تتحقق شاشة الفاتورة نفسها"""
+        try:
+            self.show_page("invoice")
+            try:
+                self.refresh_items()
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+            _clean9 = []
+            for it9 in (items or []):
+                _nm9 = str(it9.get("item") or "").strip()
+                try:
+                    _q9 = float(it9.get("qty"))
+                    _p9 = float(it9.get("price"))
+                except (TypeError, ValueError):
+                    continue
+                if not _nm9 or _q9 <= 0 or _p9 < 0:
+                    continue
+                _clean9.append({"item": _nm9, "qty": _q9, "price": _p9,
+                                "total": _q9 * _p9, "type": "نقداً",
+                                "orig_id": None, "reason": "", "note": ""})
+            self.cart = _clean9
+            try:
+                self.e_inv_customer.delete(0, "end")
+                if (customer_text or "").strip():
+                    self.e_inv_customer.insert(0, customer_text.strip())
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+            self.update_cart_view()
+            try:
+                self.lbl_inv_status.config(
+                    text=f"🧾 سلة معبأة من عرض سعر ({len(_clean9)} صنف) — "
+                         "أكمل البيع ثم احفظ الفاتورة", fg=ACCENT)
+            except Exception:
+                pass
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+            messagebox.showerror("خطأ", "تعذر فتح شاشة الفاتورة المعبأة — "
+                                 "سُجّل السبب في error_log.txt")
+
+    def show_debt_aging(self):
+        """★ إضافة (حزمة الصندوق والرقابة المالية — الميزتان 3+4): فتح
+        «متابعة الديون» — الطبقة الثانية عند الفتح؛ ملخص علوي بعدد الديون
+        وإجمالي كل فئة عمرية، وجدول أعمار كل دين مفتوح أو جزئي بفئاته
+        الملونة، وقائمة «من أطالب به اليوم» لكل دين موعده المتفق عليه اليوم
+        أو فات، مع زر تحصيل يستدعي نفس دالة تسجيل التحصيل القائمة كما هي
+        وزر تحديد موعد بقائمة تواريخ جاهزة (لا إدخال يدوي)"""
+        # الطبقة الثانية
+        if not (self.role == ADMIN_ROLE
+                or user_has_permission(self.user_name, "debt_aging_view")):
+            b = getattr(self, "nav_buttons", {}).get("debt_aging")
+            if b is not None:
+                b.pack_forget()   # زر متقادم بعد تبديل المستخدم: يُخفى فورًا
+            messagebox.showwarning("لا تملك صلاحية",
+                "متابعة الديون تتطلب صلاحية «متابعة الديون وأعمارها» — راجع الأدمن")
+            return
+        win = self.register_window(tk.Toplevel(self))
+        win.title("متابعة الديون")
+        win.configure(bg=BG)
+        _today6 = get_business_day()
+        # الملخص العلوي: الفئات العمرية الثلاث
+        sum_fr6 = tk.Frame(win, bg=BG)
+        sum_fr6.pack(fill="x", padx=12, pady=(12, 2))
+        def _sum_card6(title, color):
+            fr = tk.Frame(sum_fr6, bg=CARD, highlightbackground=BORDER,
+                          highlightthickness=1)
+            fr.pack(side="right", fill="x", expand=True, padx=4)
+            tk.Label(fr, text=title, bg=CARD, fg=GRAY,
+                     font=("Segoe UI", 9)).pack(pady=(6, 0))
+            v = tk.Label(fr, text="—", bg=CARD, fg=color,
+                         font=("Segoe UI", 11, "bold"))
+            v.pack(pady=(1, 6))
+            return v
+        v_b1 = _sum_card6("0–30 يومًا", GREEN)
+        v_b2 = _sum_card6("31–60 يومًا", ORANGE)
+        v_b3 = _sum_card6("أكثر من 60 يومًا", RED)
+        # جدول أعمار الديون
+        tk.Label(win, text="أعمار الديون (المفتوحة والجزئية — العمر من تاريخ "
+                           "إنشاء الدين)", bg=BG, fg=DARK, font=FB,
+                 anchor="e").pack(fill="x", padx=14, pady=(8, 2))
+        frm_a6, tv_a6 = self.mk_tree(
+            win, ["العميل", "رقم الفاتورة", "تاريخ الدين", "المتبقي",
+                  "العمر بالأيام", "الفئة"], [170, 100, 120, 110, 100, 110])
+        frm_a6.pack(fill="both", expand=True, padx=14, pady=(0, 4))
+        config_tree_stripes(tv_a6)
+        tv_a6.tag_configure("b1", foreground=GREEN)
+        tv_a6.tag_configure("b2", foreground=ORANGE)
+        tv_a6.tag_configure("b3", foreground=RED)
+        # قائمة «من أطالب به اليوم» — صفوف بزرين لكل دين (تحصيل + موعد)
+        tk.Label(win, text="من أطالب به اليوم (موعده المتفق عليه اليوم أو فات)",
+                 bg=BG, fg=DARK, font=FB, anchor="e").pack(
+                     fill="x", padx=14, pady=(6, 2))
+        wrap6 = tk.Frame(win, bg=CARD, highlightbackground=BORDER,
+                         highlightthickness=1)
+        wrap6.pack(fill="both", expand=True, padx=14, pady=(0, 4))
+        cvs6 = tk.Canvas(wrap6, bg=CARD, highlightthickness=0, height=150)
+        vsb6 = ttk.Scrollbar(wrap6, orient="vertical", command=cvs6.yview)
+        inner6 = tk.Frame(cvs6, bg=CARD)
+        _wid6 = cvs6.create_window(0, 0, window=inner6, anchor="nw")
+        def _cconf6(e):
+            cvs6.itemconfigure(_wid6, width=cvs6.winfo_width())
+        def _iconf6(e):
+            cvs6.configure(scrollregion=cvs6.bbox("all"))
+        cvs6.bind("<Configure>", _cconf6)
+        inner6.bind("<Configure>", _iconf6)
+        def _wheel6(e):
+            try:
+                cvs6.yview_scroll(-1 * int(e.delta / 120), "units")
+            except Exception:
+                pass
+            return "break"
+        cvs6.bind("<MouseWheel>", _wheel6)
+        inner6.bind("<MouseWheel>", _wheel6)
+        vsb6.pack(side="left", fill="y")
+        cvs6.pack(side="right", fill="both", expand=True)
+        lbl_err6 = tk.Label(win, text="", bg=BG, fg=RED, font=FB)
+
+        def _bind_wheel6(w):
+            try:
+                w.bind("<MouseWheel>", _wheel6)
+                for c6 in w.winfo_children():
+                    _bind_wheel6(c6)
+            except Exception:
+                pass
+
+        def _build_due_rows6(due_rows):
+            """بناء صفوف «من أطالب به اليوم» — زر تحصيل وزر موعد لكل سطر"""
+            for w6 in inner6.winfo_children():
+                try:
+                    w6.destroy()
+                except Exception:
+                    pass
+            if not due_rows:
+                tk.Label(inner6, text="لا مواعيد مستحقة — كل الديون في "
+                                      "مواعيدها ✅", bg=CARD, fg=GRAY,
+                         font=F).pack(pady=14)
+                return
+            for d6 in due_rows:
+                row6 = tk.Frame(inner6, bg=CARD)
+                row6.pack(fill="x", padx=8, pady=3)
+                txt6 = (f"{d6['cname'] or 'عميل'} — فاتورة رقم "
+                        f"{d6['invoice_number'] or '—'} — المتبقي "
+                        f"{money(d6['remaining'])} — الموعد {d6['promised_date']}")
+                try:
+                    _late6 = (date.fromisoformat(_today6)
+                              - date.fromisoformat(str(d6["promised_date"]))).days
+                    if _late6 > 0:
+                        txt6 += f" (فات موعده بـ{_late6} يومًا)"
+                except Exception:
+                    pass
+                tk.Label(row6, text=txt6, bg=CARD, fg=DARK, font=F,
+                         anchor="e").pack(side="right", fill="x", expand=True,
+                                         padx=6)
+                b_pr6 = self.mk_btn(row6, "📅 تحديد موعد",
+                                    lambda dd=dict(d6): self._aging_set_promise(
+                                        dd["id"], _refresh_all6), "#475569")
+                b_pr6.configure(padx=10, pady=4)
+                b_pr6.pack(side="left", padx=4)
+                b_co6 = self.mk_btn(row6, "💵 تحصيل",
+                                    lambda dd=dict(d6): self._aging_collect(
+                                        dd["id"], _refresh_all6), GREEN)
+                b_co6.configure(padx=10, pady=4)
+                b_co6.pack(side="left", padx=4)
+            _bind_wheel6(inner6)
+
+        def _refresh_all6(*_):
+            try:
+                if not win.winfo_exists():
+                    return
+                rows6 = debt_aging_rows()
+                _b1 = [r for r in rows6 if r["bucket"] == "0–30 يومًا"]
+                _b2 = [r for r in rows6 if r["bucket"] == "31–60 يومًا"]
+                _b3 = [r for r in rows6 if r["bucket"] == "أكثر من 60 يومًا"]
+                v_b1.config(text=f"{len(_b1)} دين — إجمالي "
+                                 f"{money(sum(r['remaining'] for r in _b1))}")
+                v_b2.config(text=f"{len(_b2)} دين — إجمالي "
+                                 f"{money(sum(r['remaining'] for r in _b2))}")
+                v_b3.config(text=f"{len(_b3)} دين — إجمالي "
+                                 f"{money(sum(r['remaining'] for r in _b3))}")
+                tv_a6.delete(*tv_a6.get_children())
+                _tagmap6 = {"0–30 يومًا": "b1", "31–60 يومًا": "b2",
+                            "أكثر من 60 يومًا": "b3"}
+                for i6, r in enumerate(rows6):
+                    tv_a6.insert(
+                        "", "end",
+                        tags=( _tagmap6.get(r["bucket"], "b1"),)
+                              + (("odd",) if i6 % 2 else ()),
+                        values=(r["cname"] or "—", r["invoice_number"] or "—",
+                                (r["created_at"] or "—")[:10],
+                                money(r["remaining"]), r["age"], r["bucket"]))
+                if not rows6:
+                    tv_a6.insert("", "end", values=(
+                        "لا ديون مفتوحة أو جزئية ✅", "—", "—", "—", "—", "—"))
+                due6 = [r for r in rows6
+                        if r["promised_date"] and str(r["promised_date"]) <= _today6]
+                _build_due_rows6(due6)
+                lbl_err6.pack_forget()
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+                lbl_err6.config(text="تعذر تحديث متابعة الديون — سُجّل السبب في "
+                                     "error_log.txt")
+                try:
+                    lbl_err6.pack(fill="x", padx=14, pady=4)
+                except Exception:
+                    pass
+        bar6 = tk.Frame(win, bg=BG)
+        bar6.pack(fill="x", padx=12, pady=(2, 0))
+        self.mk_btn(bar6, "🔄 تحديث", _refresh_all6, "#475569").pack(
+            side="right", padx=4)
+        tk.Label(bar6, text="العمر بالأيام من تاريخ إنشاء الدين — والتحصيل "
+                            "بنفس دالة التحصيل القائمة", bg=BG, fg=GRAY,
+                 font=("Segoe UI", 9)).pack(side="right", padx=8)
+        _refresh_all6()
+        place_window(win, 920, 660)
+
+    def _aging_collect(self, debt_id, refresh_cb=None):
+        """★ إضافة (حزمة الصندوق والرقابة المالية — الميزة 4): زر «تحصيل»
+        في قائمة «من أطالب به اليوم» — يستدعي نفس دالة تسجيل التحصيل
+        القائمة _cw_collect كما هي دون أي إعادة كتابة لها: إن كانت نافذة
+        «العملاء والديون والضمانات» مفتوحة يُحدَّث جدولها بدالة
+        _cw_refresh_debts القائمة ثم يُحدَّد صف الدين فيه، وإلا تُبنى بنية
+        خفية غير مرئية أبدًا (إطار غير محزم + جدول الديون وخريطته بنفس
+        بيانات دالة _cw_refresh_debts القائمة نفسها) يتحدد فيها الصف، ثم
+        تُستدعى الدالة القائمة نفسها حرفيًا — وصلاحية التحصيل نفسها
+        (collections_list) تظل مفحوصة داخل الدالة القائمة كما هي"""
+        try:
+            debt_id = str(int(debt_id))
+        except Exception:
+            return
+        try:
+            tv = getattr(self, "_cw_tv_debt", None)
+            have6 = False
+            if tv is not None:
+                try:
+                    if tv.winfo_exists():
+                        try:
+                            self._cw_refresh_debts()
+                        except Exception:
+                            pass
+                        have6 = tv.exists(debt_id)
+                except Exception:
+                    have6 = False
+            if not have6:
+                # بنية خفية مؤقتة: إطار غير محزم (غير مرئي أبدًا) يحمل جدول
+                # الديون وخريطته — بنية واحدة حية كحد أقصى في أي لحظة
+                try:
+                    _old6 = getattr(self, "_aging_hidden_host", None)
+                    if _old6 is not None:
+                        _old6.destroy()
+                except Exception:
+                    pass
+                host6 = tk.Frame(self)
+                self._aging_hidden_host = host6
+                _frm6, tv6 = self.mk_tree(
+                    host6, ["العميل", "رقم الفاتورة", "التاريخ", "أصل الدين",
+                            "المدفوع", "المتبقي", "الحالة"],
+                    [180, 100, 110, 120, 120, 120, 90])
+                self._cw_tv_debt = tv6
+                self._cw_debt_map = {}
+                try:
+                    with connect() as conn:
+                        rows6 = conn.execute(
+                            "SELECT d.id, d.invoice_number, d.created_at, "
+                            "d.total_amount, d.paid_amount, d.status, "
+                            "d.customer_id, c.name AS cname FROM debts d "
+                            "LEFT JOIN customers c ON c.id = d.customer_id "
+                            "WHERE d.status IN ('مفتوح','جزئي') "
+                            "ORDER BY d.id DESC").fetchall()
+                    for d in rows6:
+                        rem6 = max(d["total_amount"] - d["paid_amount"], 0.0)
+                        tv6.insert("", "end", iid=str(d["id"]),
+                                   values=(d["cname"] or "—",
+                                           d["invoice_number"] or "—",
+                                           (d["created_at"] or "—")[:10],
+                                           money(d["total_amount"]),
+                                           money(d["paid_amount"]),
+                                           money(rem6), d["status"]))
+                        self._cw_debt_map[str(d["id"])] = dict(d)
+                except Exception as e:
+                    log_error(e, sys.exc_info()[2])
+                tv = tv6
+                have6 = tv.exists(debt_id)
+            if not have6:
+                messagebox.showwarning("تنبيه", "هذا الدين لم يعد مفتوحًا — "
+                                                "حدّث النافذة")
+                return
+            tv.selection_set(debt_id)
+            try:
+                tv.see(debt_id)
+            except Exception:
+                pass
+            _nbefore6 = len(getattr(self, "open_windows", []))
+            # ← نفس دالة تسجيل التحصيل القائمة كما هي دون أي إعادة كتابة
+            self._cw_collect()
+            # تحديث جداول نافذتنا عند إغلاق نافذة التحصيل (سُجّل أم لا)
+            try:
+                _ows6 = getattr(self, "open_windows", [])
+                if len(_ows6) > _nbefore6 and refresh_cb is not None:
+                    _ows6[-1].bind("<Destroy>",
+                                   lambda _e: refresh_cb(), add="+")
+            except Exception:
+                pass
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+
+    def _aging_set_promise(self, debt_id, refresh_cb=None):
+        """★ إضافة (حزمة الصندوق والرقابة المالية — الميزة 4): زر «تحديد
+        موعد» — نافذة صغيرة بقائمة تواريخ جاهزة حصراً (لا إدخال يدوي):
+        اليوم / غدًا / بعد 3 أيام / بعد أسبوع / بعد أسبوعين / بعد شهر من
+        اليوم التجاري الجاري، وتحديث عمود promised_date الجديد وحده + سطر
+        تدقيق debt_promise_set"""
+        # الطبقة الثانية (دفاع مزدوج مع إخفاء الزر)
+        if not (self.role == ADMIN_ROLE
+                or user_has_permission(self.user_name, "debt_aging_view")):
+            messagebox.showwarning("لا تملك صلاحية",
+                "تحديد الموعد يتطلب صلاحية «متابعة الديون وأعمارها» — راجع الأدمن")
+            return
+        try:
+            debt_id = int(debt_id)
+        except Exception:
+            return
+        try:
+            _ensure_cash_tables()
+            base6 = date.fromisoformat(get_business_day())
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+            return
+        inv6, cnm6 = "—", "عميل"
+        try:
+            with connect() as conn:
+                rr6 = conn.execute(
+                    "SELECT d.invoice_number, c.name AS cname FROM debts d "
+                    "LEFT JOIN customers c ON c.id=d.customer_id WHERE d.id=?",
+                    (debt_id,)).fetchone()
+            if rr6 is not None:
+                inv6 = rr6["invoice_number"] or "—"
+                cnm6 = rr6["cname"] or "عميل"
+        except Exception:
+            pass
+        win = self.register_window(tk.Toplevel(self))
+        win.title("تحديد موعد التحصيل")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+        try:
+            win.transient(self)
+        except Exception:
+            pass
+        card = tk.Frame(win, bg=CARD, highlightbackground=BORDER,
+                        highlightthickness=1)
+        card.pack(fill="both", expand=True, padx=14, pady=12)
+        tk.Label(card, text="📅 تحديد موعد التحصيل", bg=CARD, fg=DARK,
+                 font=FT).pack(pady=(10, 2))
+        tk.Label(card, text=f"{cnm6} — فاتورة رقم {inv6}", bg=CARD, fg=GRAY,
+                 font=FB).pack(pady=2)
+        tk.Label(card, text="اختر تاريخًا جاهزًا — لا إدخال يدوي", bg=CARD,
+                 fg=GRAY, font=("Segoe UI", 9)).pack(pady=(0, 6))
+        options6 = [("اليوم", 0), ("غدًا", 1), ("بعد 3 أيام", 3),
+                    ("بعد أسبوع", 7), ("بعد أسبوعين", 14), ("بعد شهر", 30)]
+
+        def _pick6(label6, dd6):
+            try:
+                iso6 = date.fromordinal(base6.toordinal() + dd6).isoformat()
+                with connect() as conn:
+                    conn.execute("UPDATE debts SET promised_date=? WHERE id=?",
+                                 (iso6, debt_id))
+                audit("debt_promise_set",
+                      f"العميل: {cnm6} | فاتورة رقم {inv6} | الموعد الجديد: "
+                      f"{iso6} ({label6})")
+                win.destroy()
+                try:
+                    if refresh_cb is not None:
+                        refresh_cb()
+                except Exception:
+                    pass
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+                messagebox.showerror("خطأ", "تعذر تحديد الموعد — سُجّل الخطأ في "
+                                     "error_log.txt", parent=win)
+        grid6 = tk.Frame(card, bg=CARD)
+        grid6.pack(pady=4)
+        for i6, (label6, dd6) in enumerate(options6):
+            r6, c6 = divmod(i6, 2)
+            iso_show6 = date.fromordinal(base6.toordinal() + dd6).isoformat()
+            b6 = self.mk_btn(grid6, f"{label6}\n{iso_show6}",
+                             (lambda l=label6, x=dd6: _pick6(l, x)), ACCENT)
+            b6.configure(padx=14, pady=4)
+            b6.grid(row=r6, column=(1 - c6), padx=5, pady=4)
+        self.mk_btn(card, "إلغاء", win.destroy, "#475569").pack(pady=(8, 10))
+        place_window(win, 470, 400)
+
     def rebuild_ui_for_current_user(self):
         # حاوية أزرار القائمة نفسها القائمة (إطار nav داخل Canvas
         # التمرير) — إن غابت فلا شيء يُهدم ولا يُبنى: تكييف الواجهة
@@ -16574,6 +21527,168 @@ class App(tk.Tk):
                                "ثم الحفظ بنفس دالة الفاتورة القائمة وتسجيل الباقي ديناً")
         except Exception as e:
             log_error(e, sys.exc_info()[2])
+        # (2-و) ميزة «آخر سعر بيع» في شاشة الفاتورة (تلميح آخر سعر تحت
+        #     حقل اسم الصنف + زر «استعلام آخر الأسعار» في شريط إجراءاتها)
+        #     — أدمن بالدور أو مفتاح last_price_view من الكتالوج عبر
+        #     user_has_permission: نفس المنطق الجراحي حرفياً — من فقد
+        #     الصلاحية يُهدم عنصراه وحدهما (إخفاء نهائي لا تعطيل)، ومن
+        #     استحقهما وغابا يُبنيا وحدهما في موضعهما القائم، وكل دالة
+        #     بحث تفحص المفتاح داخلياً ثانياً قبل أي قراءة (طبقة ثانية
+        #     كاملة) — هكذا يظهران أو يختفيان حسب صاحب الجلسة الجديد
+        try:
+            _want_lp = user_has_permission(self.user_name, "last_price_view")
+            _blp = getattr(self, "b_inv_lastprice", None)
+            if (not _want_lp) and _blp is not None:
+                try:
+                    _blp.destroy()
+                except Exception:
+                    pass
+                self.b_inv_lastprice = None
+            elif (_want_lp and _blp is None
+                  and getattr(self, "_invbar_lastprice_host", None) is not None):
+                _host = self._invbar_lastprice_host
+                if _host.winfo_exists():
+                    b = self.mk_btn(_host, "🔍 استعلام آخر الأسعار",
+                                    self.show_last_prices_window, ACCENT)
+                    b.pack(side="right", padx=6,
+                           before=(self._inv_rm_btn_ref
+                                   if getattr(self, "_inv_rm_btn_ref", None) is not None
+                                   else None))
+                    self.b_inv_lastprice = b
+                    add_tip(b, "نافذة استعلام صغيرة: آخر 5 عمليات بيع مطابقة "
+                               "لاسم الصنف (تاريخها وسعر وحدتها وكميتها والعميل "
+                               "والبائع ورقم الفاتورة) — لتوحيد التسعير بين البائعين")
+            _lblp = getattr(self, "lbl_inv_last_price", None)
+            if (not _want_lp) and _lblp is not None:
+                try:
+                    _lblp.destroy()
+                except Exception:
+                    pass
+                self.lbl_inv_last_price = None
+                self._lp_hint_hide()
+            elif (_want_lp and _lblp is None
+                  and getattr(self, "_inv_lp_hint_host", None) is not None):
+                if self._inv_lp_hint_host.winfo_exists():
+                    self._lp_build_hint_label()
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+
+        # (2-هـ) أزرار حزمة الصندوق والرقابة المالية الثلاثة (كشف الصندوق /
+        #     المصروفات / متابعة الديون) — أدمن بالدور أو مفتاحه الحرفي من
+        #     الكتالوج عبر user_has_permission: نفس المنطق الجراحي حرفيًا —
+        #     من فقد شرطه يُهدم زره وحده (إخفاء نهائي لا تعطيل)، ومن
+        #     استحقه وغاب يُنشأ وحده بنفس نمط إنشائه في build_sidebar
+        #     حرفيًا (النص والألوان والأمر والتلميح) داخل جسم مجموعته في
+        #     الأكورديون، وكل زر داخل try/except مستقل فلا يكسر فشلُ زر
+        #     إخوته أبدًا
+        for _key6, _txt6, _perm6, _cmd6, _tip6 in [
+            ("cash_report", "💵  كشف الصندوق", "cash_report_view",
+             self.show_cash_report,
+             "أرقام اليوم التجاري: المبيعات والدفعات الأولى والتحصيلات "
+             "والمرتجعات والمصروفات والنقدية المتوقعة في الدرج — لمن مُنح "
+             "صلاحيتها"),
+            ("expenses", "💸  المصروفات", "expenses_manage",
+             self.show_expenses_window,
+             "تسجيل مصروفات المحل الموثقة بتصنيفات جاهزة وعرضها بفترات — "
+             "لمن مُنح صلاحيتها"),
+            ("debt_aging", "⏳  متابعة الديون", "debt_aging_view",
+             self.show_debt_aging,
+             "أعمار الديون بالفئات الملونة + قائمة من أطالب به اليوم مع "
+             "تحديد الموعد والتحصيل — لمن مُنح صلاحيتها"),
+        ]:
+            try:
+                _b6 = self.nav_buttons.get(_key6)
+                _want6 = (self.role == ADMIN_ROLE
+                          or user_has_permission(self.user_name, _perm6))
+                if not _want6 and _b6 is not None:
+                    try:
+                        _b6.destroy()
+                    except Exception:
+                        pass
+                    self.nav_buttons.pop(_key6, None)
+                elif _want6 and _b6 is None:
+                    b = tk.Button(self._accordion_body_for(_key6),
+                                  text=_txt6, font=FB, bd=0, cursor="hand2",
+                                  anchor="e", bg=SIDEBAR, fg="#cbd5e1",
+                                  activebackground=ACCENT,
+                                  activeforeground="white", padx=18, pady=11,
+                                  highlightthickness=0, command=_cmd6)
+                    b.pack(fill="x", padx=10, pady=3)   # داخل جسم مجموعته، ويعيد ترتيبه refresh
+                    self.nav_buttons[_key6] = b
+                    add_tip(b, _tip6)
+            except Exception as e:
+                log_error(e, sys.exc_info()[2])
+        # (2-ز) زر «تسجيل مصروف» (ميزة «المصروفات» الجديدة) — أدمن بالدور
+        #     أو المفتاح الجديد expense_record من الكتالوج عبر
+        #     user_has_permission: نفس المنطق الجراحي حرفيًا — من فقد
+        #     شرطه يُهدم زره وحده (إخفاء نهائي لا تعطيل)، ومن استحقه وغاب
+        #     يُنشأ وحده بنفس نمط إنشائه في build_sidebar حرفيًا داخل جسم
+        #     مجموعته في الأكورديون، وإن كان شرطه قائمًا فلا يُمس إطلاقًا
+        try:
+            b_exa8 = self.nav_buttons.get("expense_add")
+            want_exa8 = (self.role == ADMIN_ROLE
+                         or user_has_permission(self.user_name,
+                                                "expense_record"))
+            if not want_exa8 and b_exa8 is not None:
+                try:
+                    b_exa8.destroy()
+                except Exception:
+                    pass
+                self.nav_buttons.pop("expense_add", None)
+            elif want_exa8 and b_exa8 is None:
+                b = tk.Button(self._accordion_body_for("expense_add"),
+                              text="📝  تسجيل مصروف", font=FB, bd=0,
+                              cursor="hand2", anchor="e", bg=SIDEBAR,
+                              fg="#cbd5e1", activebackground=ACCENT,
+                              activeforeground="white", padx=18, pady=11,
+                              highlightthickness=0,
+                              command=self.open_expense_record_dialog)
+                b.pack(fill="x", padx=10, pady=3)   # داخل جسم مجموعته، ويعيد ترتيبه refresh
+                self.nav_buttons["expense_add"] = b
+                add_tip(b, "تسجيل مصروف نقدي مدفوع من الدرج مباشرة (نقل / "
+                           "ضيافة / كهرباء / أجرة توصيل / صيانة / أخرى) — "
+                           "يُخصم تلقائيًا في كشف الصندوق ضمن «نقد خارج» — "
+                           "لمن مُنح صلاحيتها")
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+        # (2-ح) زر «عروض الأسعار» (ميزة «عروض الأسعار» الجديدة) — أدمن
+        #     بالدور أو المفتاح الجديد quotations_manage من الكتالوج عبر
+        #     user_has_permission: نفس المنطق الجراحي حرفيًا — من فقد شرطه
+        #     يُهدم زره وحده (إخفاء نهائي لا تعطيل)، ومن استحقه وغاب
+        #     يُنشأ وحده بنفس نمط إنشائه في build_sidebar حرفيًا داخل جسم
+        #     مجموعته في الأكورديون — ومعه تصفير سياق التحويل المعلق عند
+        #     كل تبديل جلسة (عرض لا يتحول بفاتورة مستخدم آخر أبدًا)
+        try:
+            self._pending_quote = None
+        except Exception:
+            pass
+        try:
+            b_quot9 = self.nav_buttons.get("quotations")
+            want_quot9 = (self.role == ADMIN_ROLE
+                          or user_has_permission(self.user_name,
+                                                 "quotations_manage"))
+            if not want_quot9 and b_quot9 is not None:
+                try:
+                    b_quot9.destroy()
+                except Exception:
+                    pass
+                self.nav_buttons.pop("quotations", None)
+            elif want_quot9 and b_quot9 is None:
+                b = tk.Button(self._accordion_body_for("quotations"),
+                              text="🧾  عروض الأسعار", font=FB, bd=0,
+                              cursor="hand2", anchor="e", bg=SIDEBAR,
+                              fg="#cbd5e1", activebackground=ACCENT,
+                              activeforeground="white", padx=18, pady=11,
+                              highlightthickness=0,
+                              command=self.show_quotations_window)
+                b.pack(fill="x", padx=10, pady=3)   # داخل جسم مجموعته، ويعيد ترتيبه refresh
+                self.nav_buttons["quotations"] = b
+                add_tip(b, "تحضير عروض الأسعار للعملاء: تجميعة أصناف "
+                           "بأسعارها برقم عرض مستقل، ونسخة نصية للعميل، "
+                           "وتحويل العرض المقبول إلى فاتورة بضغطة واحدة — "
+                           "لمن مُنح صلاحيتها")
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
         # (3) ترتيب الأزرار داخل مجموعاتها حسب صلاحيات المستخدم الجديد +
         #     تحديث نص زر قائمة المستخدم أسفل الشريط (نفس ما يحدث عند
         #     تسجيل الدخول من البداية) — الدالة القائمة نفسها لم تُمس
@@ -16585,6 +21700,15 @@ class App(tk.Tk):
         #     البداية (تحدّث الشريط العلوي وأزرار اليوم التجاري معها)
         try:
             self.show_page("new")
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+        # (5) ★★★ إضافة (موعد التحصيل): شريط تنبيه التحصيلات أعلى الشاشة
+        #     الرئيسية يُبنى/يُخفى حسب صاحب الجلسة الجديد — لمن يملك
+        #     collections_list فقط وتوجد متأخرة أو مستحقة اليوم فعلاً
+        #     (إخفاء لا تعطيل)، ويختفي تمامًا لمن فقد الصلاحية أو بلا
+        #     مستحقات — هكذا يظهر أو يختفي كل عنصر حسب صاحب الجلسة الجديد
+        try:
+            self._refresh_collections_alert_bar()
         except Exception as e:
             log_error(e, sys.exc_info()[2])
 
