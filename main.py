@@ -221,6 +221,50 @@
   لا فقدان في أي اتجاه) — وكل إجراء (فحص/تثبيت/استعادة/نقل) في سجل التدقيق
 """
 
+
+def _hide_console_window():
+    """★ إضافة (الإصدار 2.37، وصُحّحت في 2.38 ثم 2.39 — إخفاء نافذة
+    الأوامر من داخل الكود): إن شُغّل البرنامج بضغطة على main.py
+    يفتحه ويندوز بـ python.exe فينشئ نافذة أوامر سوداء خلف البرنامج؛
+    هذه الدالة تتخلص منها فور بدء التشغيل (ويندوز فقط — على غير
+    ويندوز لا تفعل شيئاً، وعبر pythonw لا توجد نافذة أصلاً فلا
+    تفعل شيئاً).
+    ملاحظة مهمة (تصحيح 2.38): نافذة الأوامر في ويندوز تملكها عملية
+    conhost.exe لا عملية بايثون، فمقارنة رقم العملية صاحب النافذة
+    برقم هذه العملية تفشل دائماً — وهذا سبب بقاء النافذة في 2.37.
+    ملاحظة مهمة (تصحيح 2.39): الإخفاء وحده بـ ShowWindow يبعد
+    النافذة عن الشاشة لكن زرها يبقى في شريط المهام؛ لذلك بعد
+    الإخفاء تُفصل العملية عن نافذة الأوامر نهائياً بـ FreeConsole
+    فتُغلق النافذة تماماً ولا يبقى لها أي أثر في الشريط. وبعد
+    الفصل تصبح الكتابة على stdout/stderr غير صالحة، فتُوجَّه إلى
+    devnull (الأخطاء تُسجل في error_log.txt وتظهر في صندوق رسالة
+    كما هو معتاد). قد تومض النافذة لحظة قصيرة قبل أن تختفي لأن
+    بايثون ينشئها قبل وصوله إلى هنا. وأي فشل فيها صامت تماماً
+    ولا يعطل التشغيل."""
+    try:
+        import ctypes
+        import os
+        import sys
+        if sys.platform != "win32":
+            return
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if not hwnd:
+            return
+        ctypes.windll.user32.ShowWindow(hwnd, 0)
+        ctypes.windll.kernel32.FreeConsole()
+        try:
+            _null = open(os.devnull, "w")
+            sys.stdout = _null
+            sys.stderr = _null
+            globals()["_hide_console_devnull"] = _null
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+_hide_console_window()
+
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import os, sys, traceback
@@ -323,7 +367,7 @@ import threading        # ★ إضافة (إصدار 10): فحص خلفي لا �
 # VERSION من "2.15" إلى "2.16" — الدفع المقسّم في فاتورة الأصناف +
 # خيار «نقدي+شبكة» في عمليات اليوم + عمود «الوقت» بجانب التاريخ +
 # عرض الإصدار في شريط عنوان النافذة الرئيسية
-VERSION = "2.33"        # إصدار البرنامج الحالي — يُقارن برقم version.txt
+VERSION = "2.39"        # إصدار البرنامج الحالي — يُقارن برقم version.txt
 UPDATE_VERSION_URL = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/version.txt"
 UPDATE_FILE_URL    = "https://raw.githubusercontent.com/zozoaooc/shop-updates/main/main.py"
 # ★ إضافة (الإصدار 15 — الجزء الثاني): ملاحظات الإصدارات (changelog) —
@@ -8413,6 +8457,7 @@ class App(tk.Tk):
         self.refresh_stats()   # ★ تحديث الشريط عند كل تنقل
         if key == "new":
             self.refresh_items(); self.update_closed_banner()
+            self.refresh_held_panel()
         elif key == "today":
             self.refresh_today()
         elif key == "archive":
@@ -8429,8 +8474,18 @@ class App(tk.Tk):
         form = tk.Frame(p, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
         form.pack(fill="x", padx=25, pady=10)
 
+        # ★★★ إضافة (الإصدار 2.34 — خانة المعلقات): أعلى النموذج عمودان —
+        # الحقول يميناً، وخانة المعلقات يساراً في المساحة الفارغة؛ وأسفل
+        # العمودين يبقى المبيع والدفع وأزرار الحفظ بعرض البطاقة كاملاً
+        top = tk.Frame(form, bg=CARD)
+        top.pack(fill="x")
+        right_col = tk.Frame(top, bg=CARD)
+        right_col.pack(side="right", fill="y")
+        left_col = tk.Frame(top, bg=CARD)
+        left_col.pack(side="left", fill="both", expand=True)
+
         def field_row(label):
-            fr = tk.Frame(form, bg=CARD); fr.pack(fill="x", padx=22, pady=6)
+            fr = tk.Frame(right_col, bg=CARD); fr.pack(fill="x", padx=22, pady=6)
             tk.Label(fr, text=label, bg=CARD, fg=DARK, font=FB, width=11, anchor="e").pack(side="right")
             inner = tk.Frame(fr, bg=CARD)
             inner.pack(side="right", padx=(0, 10))
@@ -8472,7 +8527,7 @@ class App(tk.Tk):
         tk.Label(in_c, text="(اختياري)", bg=CARD, fg=GRAY,
                  font=("Segoe UI", 9)).pack(side="right", padx=(6, 0))
 
-        trow = tk.Frame(form, bg=CARD); trow.pack(fill="x", padx=22, pady=8)
+        trow = tk.Frame(right_col, bg=CARD); trow.pack(fill="x", padx=22, pady=8)
         tk.Label(trow, text="النوع:", bg=CARD, fg=DARK, font=FB).pack(side="right")
         # ★ تعديل (إصدار 5 — نظام الأنواع الثلاثة): ثلاثة أنواع — نقداً (أخضر:
         # الدرج النقدي) وشبكة (أزرق: جهاز الشبكة) بقيمة موجبة عادية،
@@ -8494,7 +8549,7 @@ class App(tk.Tk):
         # والسعر يُعبأ بسعر الأصل ويُقفل للتعديل — ممنوع مرتجع بلا أصل
         self._orig_map = {}
         self._trow_ref = trow
-        self.fr_orig = tk.Frame(form, bg=CARD)
+        self.fr_orig = tk.Frame(right_col, bg=CARD)
         orow = tk.Frame(self.fr_orig, bg=CARD); orow.pack(fill="x", pady=4)
         tk.Label(orow, text="العملية المُرجَعة:", bg=CARD, fg=RED, font=FB,
                  width=17, anchor="e").pack(side="right")
@@ -8611,16 +8666,14 @@ class App(tk.Tk):
                                "الحفظ بنفس دالة حفظ العملية القائمة وتسجيل الباقي ديناً")
         else:
             self.b_credit_op = None
-        # ★★★ إضافة (الإصدار 2.21 — تعليق عملية): زرا التعليق والمعلقات
-        # بجانب زر الحفظ — بلا صلاحية جديدة: الفحص عند الضغط بنفس مفتاح
-        # الحفظ add_ops
+        # ★★★ إضافة (الإصدار 2.21 — تعليق عملية): زر التعليق بجانب زر
+        # الحفظ — بلا صلاحية جديدة: الفحص عند الضغط بنفس مفتاح الحفظ
+        # add_ops؛ وزر «📋 المعلقات» أُلغي من هذه الصفحة في 2.35 لأن
+        # الخانة نفسها هي قائمة المعلقات، وبقي الزر في صفحة الفاتورة
         b_hold_op = self.mk_btn(srow, "⏸ تعليق العملية", self.hold_operation, ACCENT)
         b_hold_op.pack(side="right", padx=6, before=self.lbl_status)
         add_tip(b_hold_op, "تعليق العملية الحالية وتفريغ النموذج — "
                             "لبيع غيرها ثم استئنافها لاحقاً من «المعلقات»")
-        b_held_op = self.mk_btn(srow, "📋 المعلقات", self.show_held_invoices, "#475569")
-        b_held_op.pack(side="right", padx=6, before=self.lbl_status)
-        add_tip(b_held_op, "قائمة الفواتير والعمليات المعلقة — استئناف أي منها أو حذفها")
 
         for e in (self.e_qty, self.e_price):
             e.bind("<KeyRelease>", self.update_calc)
@@ -8659,6 +8712,10 @@ class App(tk.Tk):
         self.b_save_op.bind("<Return>", _op_save_btn_enter)
         # ★★★ إضافة (المرحلة الرابعة): الخصم يحدّث الإجمالي المعروض لحظياً
         self.e_disc.bind("<KeyRelease>", self.update_calc)
+        # ★★★ إضافة (الإصدار 2.34 — خانة المعلقات): بناء الخانة في العمود
+        # الأيسر وتعبئتها من قاعدة البيانات
+        self._build_held_panel(left_col)
+        self.refresh_held_panel()
 
     def update_calc(self, *_):
         q, pr = to_num(self.e_qty.get()), to_num(self.e_price.get())
@@ -9696,7 +9753,10 @@ class App(tk.Tk):
         الرؤوس وصفوف متناوبة الألوان ككل جداول البرنامج"""
         if not self.require_admin("delete_op"):
             return
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("recycle_bin")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("🗑 سلة المحذوفات")
         win.configure(bg=CARD)
         # ★ تعديل مصرح به (الإصدار 15 — الجزء الأول — القاعدة الذهبية): شريط
@@ -10273,7 +10333,10 @@ class App(tk.Tk):
         نافذة صغيرة عابرة بلا أي سؤال (لا تلغي ولا تعطّل أي عملية بيع جارية)،
         تختفي وحدها بعد 10 ثوانٍ أو بضغطة زر"""
         try:
-            win = self.register_window(tk.Toplevel(self))
+            win, _is_new = self._popup_window("notify_auto_close")
+            if not _is_new:
+                return win
+            win = self.register_window(win)
             win.title("إغلاق تلقائي لليوم التجاري")
             win.configure(bg=BG)
             win.resizable(False, False)
@@ -10395,7 +10458,10 @@ class App(tk.Tk):
         if not manager_level(self.role):
             messagebox.showwarning("صلاحية", "حركات الأيام السابقة خاصة بالإدارة فقط (أدمن/مدير)")
             return
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("past_days")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("حركات الأيام السابقة (قراءة فقط)")
         win.configure(bg=BG)
         # القاعدة الذهبية: شريط الأزرار السفلي يُحزم أولاً فلا يُقص أبداً
@@ -10610,7 +10676,10 @@ class App(tk.Tk):
         if not manager_level(self.role):
             messagebox.showwarning("صلاحية", "حركات الأيام السابقة خاصة بالإدارة فقط (أدمن/مدير)")
             return
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("past_days_station")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("حركات الأيام السابقة (محطة مشاهدة وتعديل كاملة)")
         win.configure(bg=BG)
         # القاعدة الذهبية: شريط الأزرار السفلي يُحزم أولاً فلا يُقص أبداً
@@ -10829,7 +10898,10 @@ class App(tk.Tk):
         is_current = bool(open_d) and dd == open_d and not is_closed(dd)
         op_ts = (datetime.now().strftime("%Y-%m-%d %H:%M:%S") if is_current
                  else f"{dd} 12:00:00")
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("station_add_op")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title(f"➕ إضافة حركة ليوم {dd}"
                   + (" — اليوم الحالي (وقت الآن)" if is_current
                      else " — يوم سابق (12:00 ظهراً)"))
@@ -11017,7 +11089,10 @@ class App(tk.Tk):
         والدور، ثم on_saved إن أُعطي (محطة الأيام تعيد احتساب صف اليوم
         المغلق وتحدّث النافذة) وإلا تحديث مجاميع اليوم والعدادات كالمعتاد
         — والدالة القديمة _edit_op_dialog_v21 باقية كما هي لم تُحذف"""
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window(f"edit_op:{r['id']}")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title(f"✏️ تعديل الحركة رقم {r['id']} — يوم {dd}")
         win.configure(bg=BG)
         # القاعدة الذهبية: شريط الأزرار السفلي يُحزم أولاً فلا يُقص أبداً
@@ -11343,7 +11418,10 @@ class App(tk.Tk):
         بالقيم القديمة والجديدة كاملة + تحديث مجاميع اليوم والعدادات فورًا،
         ولا يُمس daily_reports للأيام السابقة إطلاقاً (تقرير اليوم الحالي
         يتأثر تلقائيًا لأن الإغلاق يحتسب من operations)"""
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window(f"edit_op:{r['id']}")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title(f"✏️ تعديل الحركة رقم {r['id']} — يوم {d}")
         win.configure(bg=BG)
         # القاعدة الذهبية: شريط الأزرار السفلي يُحزم أولاً فلا يُقص أبداً
@@ -11641,7 +11719,10 @@ class App(tk.Tk):
             return
         # ★ إضافة (إصدار 8 — الميزة 3): تسجيل النافذة في التتبع المركزي
         # (تُغلق تلقائياً عند تبديل المستخدم)
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window(f"day_details:{d}")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title(f"تقرير يوم {d}")
         # ★ تعديل مصرح به (الإصدار 15 — الجزء الأول — القاعدة الذهبية): شريط
         # أزرار الإجراءات السفلي يُحزم أولاً side="bottom" قبل أي شيء آخر فلا
@@ -12062,6 +12143,42 @@ class App(tk.Tk):
         except Exception:
             pass
         return win
+
+    def _popup_window(self, key, parent=None):
+        """★ إضافة (الإصدار 2.36 — نافذة واحدة لكل نافذة منبثقة): تعيد
+        (win, is_new)؛ إن كانت نافذة بهذا المفتاح مفتوحة أصلاً أحضرها
+        للأمام (lift + focus) وأعدها مع is_new=False فيعود المتصل فوراً
+        دون بناء نافذة جديدة؛ وإلا أنشئ نافذة جديدة وسجل مفتاحها وانسَه
+        تلقائياً عند تدميرها — والمفتاح يشمل رقم السجل للنوافذ المرتبطة
+        بسجل معين (تعديل حركة، تفاصيل يوم، معاينة طباعة، وعد دين، عرض
+        سعر) فيفتح سجل آخر نافذة مستقلة، أما القوائم والتقارير والمراكز
+        فمفتاحها نوع النافذة وحده"""
+        wins = getattr(self, "_popup_windows", None)
+        if wins is None:
+            wins = self._popup_windows = {}
+        old = wins.get(key)
+        if old is not None:
+            try:
+                if old.winfo_exists():
+                    try:
+                        old.lift()
+                        old.focus_force()
+                    except Exception:
+                        pass
+                    return old, False
+            except Exception:
+                pass
+            wins.pop(key, None)
+        win = tk.Toplevel(parent if parent is not None else self)
+        wins[key] = win
+        def _forget(_e, _k=key, _w=win):
+            try:
+                if _e.widget is _w:
+                    self._popup_windows.pop(_k, None)
+            except Exception:
+                pass
+        win.bind("<Destroy>", _forget, add="+")
+        return win, True
 
     def _unregister_window(self, win):
         """إزالة نافذة من قائمة التتبع بعد إغلاقها"""
@@ -12577,7 +12694,10 @@ class App(tk.Tk):
                 "استعلام آخر الأسعار يتطلب صلاحية «آخر سعر بيع (شاشة "
                 "الفاتورة)» — راجع الأدمن")
             return
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("last_prices")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("استعلام آخر الأسعار")
         win.configure(bg=BG)
         win.resizable(False, False)
@@ -12831,6 +12951,7 @@ class App(tk.Tk):
         self.lbl_inv_status.config(
             text=f"⏸ عُلّقت الفاتورة ({len(items)} صنف) — الإجمالي {money(total)}",
             fg=ACCENT)
+        self.refresh_held_panel()
 
     def hold_operation(self):
         """★ إضافة (الإصدار 2.21 — تعليق عملية): تعليق نموذج «عملية
@@ -12940,6 +13061,7 @@ class App(tk.Tk):
         self.lbl_status.config(
             text=f"⏸ عُلّقت العملية ({t}: {item}) — الإجمالي {money(total)}",
             fg=ACCENT)
+        self.refresh_held_panel()
 
     def _held_counts(self):
         """★ إضافة (الإصدار 2.22): عدد المعلقات بتفصيل المصدر (فاتورة
@@ -12979,7 +13101,10 @@ class App(tk.Tk):
             messagebox.showwarning("تعذر العرض",
                 "تعذر قراءة الفواتير المعلقة — سُجّل الخطأ في error_log.txt")
             return
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("held")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title(f"📋 المعلقات ({len(rows)})")
         win.geometry("820x420")
         bar = tk.Frame(win, bg=BG)
@@ -13010,31 +13135,48 @@ class App(tk.Tk):
         tv.bind("<Double-1>", lambda e: self._held_resume(tv, win))
 
     def _held_resume(self, tv, win):
-        """★ إضافة (الإصدار 2.20): استئناف فاتورة معلقة إلى السلة كما
-        كانت تماماً (الأصناف بنوعها وأصل المرتجع وسببه، والعميل والخصم
-        ومبلغا الدفع) ثم حذفها من المعلقات — مع تحذير إن تغيّر المتاح
-        للإرجاع منذ التعليق (الحفظ نفسه يمنع التجاوز لاحقاً)"""
+        """★ إضافة (الإصدار 2.20): استئناف فاتورة معلقة من النافذة المنبثقة
+        — يختار الصف ثم يفوض إلى _held_resume_by_id (المنطق المشترك مع
+        خانة «عملية جديدة»)"""
         sel = tv.selection()
         if not sel:
             messagebox.showinfo("تنبيه", "اختر فاتورة معلقة أولاً"); return
         hid = int(sel[0])
+        self._held_resume_by_id(hid, win=win)
+
+    def _held_resume_by_id(self, hid, win=None):
+        """★ إضافة (الإصدار 2.34): استئناف معلقة برقمها — تُستدعى من
+        النافذة المنبثقة (win=النافذة) ومن خانة «عملية جديدة» (win=None:
+        بلا نافذة منبثقة؛ وفاتورة الأصناف تُفتح صفحتها بعد الاستئناف)"""
+        if not self.has_permission("add_ops"):
+            messagebox.showwarning("صلاحية", "ليست لديك صلاحية «إضافة عمليات وفواتير»")
+            return
         try:
             with connect() as conn:
                 row = conn.execute(
                     "SELECT * FROM held_invoices WHERE id=?", (hid,)).fetchone()
             if row is None:
-                messagebox.showwarning("غير موجودة", "هذه الفاتورة المعلقة لم تعد موجودة"); return
+                messagebox.showwarning("غير موجودة", "هذه المعلقة لم تعد موجودة")
+                self.refresh_held_panel()
+                return
             items = json.loads(row["items_json"])
         except Exception as e:
             log_error(e, sys.exc_info()[2])
             messagebox.showwarning("تعذر الاستئناف",
-                "تعذر قراءة الفاتورة المعلقة — سُجّل الخطأ في error_log.txt")
+                "تعذر قراءة المعلقة — سُجّل الخطأ في error_log.txt")
             return
+        self._held_resume_row(dict(row), items, hid, win)
+        self.refresh_held_panel()
+
+    def _held_resume_row(self, row, items, hid, win):
+        """★ (الإصدار 2.34): المنطق المشترك للاستئناف — كان جسم _held_resume؛
+        win=None تعني الاستئناف من خانة «عملية جديدة» بلا نافذة منبثقة
+        (فاتورة الأصناف تُفتح صفحتها ليرى البائع السلة المستعادة)"""
         # ★ إضافة (الإصدار 2.21): المعلقة من «عملية جديدة» تُستأنف إلى
         # نموذج العملية لا إلى السلة — التوجيه بالمصدر قبل أي فحص للسلة
-        _src = (dict(row).get("source") or "invoice")
+        _src = (row.get("source") or "invoice")
         if _src == "operation":
-            self._held_resume_operation(dict(row), items, hid, win)
+            self._held_resume_operation(row, items, hid, win)
             return
         if self.cart:
             if not messagebox.askyesno("السلة غير فارغة",
@@ -13084,7 +13226,10 @@ class App(tk.Tk):
         self.lbl_inv_status.config(
             text=f"↩ استُؤنفت فاتورة معلقة ({len(items)} صنف) — أكمل البيع ثم احفظ",
             fg=GREEN)
-        win.destroy()
+        if win is not None:
+            win.destroy()
+        else:
+            self.show_page("invoice")
 
     def _held_resume_operation(self, row, items, hid, win):
         """★ إضافة (الإصدار 2.21): استئناف عملية معلقة إلى نموذج «عملية
@@ -13178,26 +13323,136 @@ class App(tk.Tk):
         self.lbl_status.config(
             text=f"↩ استُؤنفت عملية معلقة ({it.get('type')}: {it['item']}) — أكمل ثم احفظ",
             fg=GREEN)
-        win.destroy()
+        if win is not None:
+            win.destroy()
 
     def _held_delete(self, tv, win):
-        """★ إضافة (الإصدار 2.20): حذف فاتورة معلقة بعد تأكيد — بلا أي
-        أثر على عمليات اليوم (المعلقة لم تُحفظ أصلاً)"""
+        """★ إضافة (الإصدار 2.20): حذف فاتورة معلقة من النافذة المنبثقة —
+        يختار الصف ثم يفوض إلى _held_delete_by_id (المنطق المشترك مع
+        خانة «عملية جديدة»)"""
         sel = tv.selection()
         if not sel:
             messagebox.showinfo("تنبيه", "اختر فاتورة معلقة أولاً"); return
         hid = int(sel[0])
+        if self._held_delete_by_id(hid, parent=win):
+            tv.delete(sel[0])
+            win.title(f"📋 المعلقات ({len(tv.get_children())})")
+
+    def _held_delete_by_id(self, hid, parent=None):
+        """★ إضافة (الإصدار 2.34): حذف معلقة برقمها بعد تأكيد — تُستدعى من
+        النافذة المنبثقة ومن خانة «عملية جديدة»؛ تعيد True إن حُذفت فعلاً"""
+        if not self.has_permission("add_ops"):
+            messagebox.showwarning("صلاحية", "ليست لديك صلاحية «إضافة عمليات وفواتير»")
+            return False
         if not messagebox.askyesno("حذف فاتورة معلقة",
-                f"حذف الفاتورة المعلقة رقم {hid} نهائياً؟", parent=win):
-            return
+                f"حذف الفاتورة المعلقة رقم {hid} نهائياً؟", parent=parent):
+            return False
         try:
             with connect() as conn:
                 conn.execute("DELETE FROM held_invoices WHERE id=?", (hid,))
             audit("حذف فاتورة معلقة", f"فاتورة معلقة رقم {hid}")
         except Exception as e:
             log_error(e, sys.exc_info()[2])
-        tv.delete(sel[0])
-        win.title(f"📋 المعلقات ({len(tv.get_children())})")
+            return False
+        self.refresh_held_panel()
+        return True
+
+    def _build_held_panel(self, host):
+        """★ إضافة (الإصدار 2.34 — خانة المعلقات): بناء هيكل الخانة في
+        العمود الأيسر من نموذج «عملية جديدة» — رأس بعدّاد، وجدول صفوف
+        قابل للتمرير، وتذييل توضيحي؛ والتعبئة في refresh_held_panel"""
+        panel = tk.Frame(host, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+        panel.pack(fill="both", expand=True, padx=(22, 8), pady=6)
+        hdr = tk.Frame(panel, bg=SIDEBAR)
+        hdr.pack(fill="x")
+        self._held_panel_title = tk.Label(hdr, text="المعلقات (0)", bg=SIDEBAR,
+                                          fg="white", font=FB)
+        self._held_panel_title.pack(side="right", padx=12, pady=6)
+        rows_host = tk.Frame(panel, bg=CARD)
+        rows_host.pack(fill="both", expand=True)
+        self._held_canvas = tk.Canvas(rows_host, bg=CARD, highlightthickness=0, height=190)
+        vsb = ttk.Scrollbar(rows_host, orient="vertical", command=self._held_canvas.yview)
+        self._held_canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="left", fill="y")
+        self._held_canvas.pack(side="right", fill="both", expand=True)
+        self._held_rows_frame = tk.Frame(self._held_canvas, bg=CARD)
+        self._held_canvas.create_window((0, 0), window=self._held_rows_frame,
+                                        anchor="nw", tags="held_rows")
+        self._held_rows_frame.bind("<Configure>",
+            lambda e: self._held_canvas.configure(scrollregion=self._held_canvas.bbox("all")))
+        self._held_canvas.bind("<Configure>",
+            lambda e: self._held_canvas.itemconfig("held_rows", width=e.width))
+        tk.Label(panel, text="اضغط «استئناف» لفتح المعلقة مباشرة — أو «حذف» لإلغائها بعد سؤال",
+                 bg=CARD, fg=GRAY, font=("Segoe UI", 9)).pack(fill="x", padx=8, pady=4)
+
+    def refresh_held_panel(self):
+        """★ إضافة (الإصدار 2.34 — خانة المعلقات؛ 2.35: محاذاة الأعمدة
+        بخلايا بعرض ثابت بالبكسل وأزرار أكبر): إعادة بناء صفوف الخانة
+        من قاعدة البيانات — تُستدعى عند عرض صفحة «عملية جديدة» وعند كل
+        تعليق/استئناف/حذف؛ لا تفعل شيئاً قبل بناء الصفحة"""
+        rows_frame = getattr(self, "_held_rows_frame", None)
+        title_lbl = getattr(self, "_held_panel_title", None)
+        if rows_frame is None or title_lbl is None:
+            return
+        try:
+            _ensure_stage4_tables()
+            with connect() as conn:
+                rows = [dict(r) for r in conn.execute(
+                    "SELECT * FROM held_invoices ORDER BY id DESC").fetchall()]
+        except Exception as e:
+            log_error(e, sys.exc_info()[2])
+            return
+        title_lbl.config(text=f"المعلقات ({len(rows)})")
+        for w in rows_frame.winfo_children():
+            w.destroy()
+        if not rows:
+            tk.Label(rows_frame, text="لا توجد معلقات — علّق عملية أو فاتورة لتظهر هنا",
+                     bg=CARD, fg=GRAY, font=F).pack(fill="x", padx=8, pady=14)
+            return
+        # أعمدة الجدول بعرض ثابت بالبكسل (يمين ← يسار): خلية الرأس
+        # وخلية البيانات لهما العرض نفسه تماماً، فلا يعود لاختلاف
+        # الخط (عريض/عادي) أو طول النص أي أثر في المحاذاة
+        _cols = [("رقم", 40), ("الشاشة", 120), ("الوقت", 85), ("البائع", 90),
+                 ("الأصناف", 75), ("الإجمالي", 100)]
+        _act_w = 200  # عمود الإجراء (زرا استئناف/حذف)
+        def _cell(parent, txt, px, h, bg, fg, font):
+            fr = tk.Frame(parent, width=px, height=h, bg=bg)
+            fr.pack(side="right")
+            fr.pack_propagate(False)
+            tk.Label(fr, text=txt, bg=bg, fg=fg, font=font).pack(expand=True)
+            return fr
+        hdr = tk.Frame(rows_frame, bg="#f8fafc")
+        hdr.pack(fill="x")
+        for txt, px in _cols:
+            _cell(hdr, txt, px, 26, "#f8fafc", GRAY, FB)
+        _act_hdr = tk.Frame(hdr, width=_act_w, height=26, bg="#f8fafc")
+        _act_hdr.pack(side="left")
+        _act_hdr.pack_propagate(False)
+        tk.Label(_act_hdr, text="إجراء", bg="#f8fafc", fg=GRAY, font=FB).pack(expand=True)
+        for r in rows:
+            try:
+                _n = len(json.loads(r["items_json"] or "[]"))
+            except Exception:
+                _n = 0
+            _ct = r["created_at"] or ""
+            _time = _ct[11:] if len(_ct) > 11 else (_ct or "—")
+            _src = ("عملية جديدة" if (r.get("source") or "invoice") == "operation"
+                    else "فاتورة أصناف")
+            _seller = (r["seller_name"] or "—")[:8]
+            row_fr = tk.Frame(rows_frame, bg=CARD)
+            row_fr.pack(fill="x", pady=1)
+            for txt, px in [(str(r["id"]), 40), (_src, 120), (_time, 85), (_seller, 90),
+                            (str(_n), 75), (money(r["total"] or 0), 100)]:
+                _cell(row_fr, txt, px, 36, CARD, DARK, F)
+            _btns = tk.Frame(row_fr, width=_act_w, height=36, bg=CARD)
+            _btns.pack(side="left")
+            _btns.pack_propagate(False)
+            tk.Button(_btns, text="حذف", font=("Segoe UI", 10, "bold"), fg=RED, bg=CARD,
+                      relief="solid", bd=1, cursor="hand2", width=7,
+                      command=lambda hid=r["id"]: self._held_delete_by_id(hid)).pack(side="left", padx=3, pady=2, ipady=3)
+            tk.Button(_btns, text="استئناف", font=("Segoe UI", 10, "bold"), fg="white", bg=GREEN,
+                      relief="flat", cursor="hand2", width=8,
+                      command=lambda hid=r["id"]: self._held_resume_by_id(hid)).pack(side="left", padx=3, pady=2, ipady=3)
 
     # ═══════════════════════════════════════════════════════
     # ★★★ إضافة (الإصدار 17 — الإضافة 2): تعديل صنف داخل السلة ✏️ ★★★
@@ -14279,7 +14534,10 @@ class App(tk.Tk):
         يغيّر كلمة مروره هو في جدول users
         (وإعادة تعيين كلمات البائعين تكون من شاشة إدارة المستخدمين)"""
         # ★ إضافة (إصدار 8 — الميزة 3): تسجيل النافذة في التتبع المركزي
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("change_password")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("تغيير كلمة المرور")
         win.configure(bg=BG); win.resizable(False, False)
         card = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
@@ -14510,7 +14768,10 @@ class App(tk.Tk):
         ★ إضافة (إصدار 8 — الميزة 5): أصبحت إضافة مستخدم (مدير/بائع) مع تحديد
         صلاحياته الدقيقة من مربعات الاختيار العشرة"""
         # ★ إضافة (إصدار 8 — الميزة 3): تسجيل النافذة في التتبع المركزي
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("add_user")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         # ★ تعديل ضروري معلن (إصدار 8 — الميزة 5): النافذة أصبحت «إضافة مستخدم»
         # وتوسّعت لاستيعاب اختيار الدور وصندوق الصلاحيات (كانت لإضافة بائع فقط)
         win.title("إضافة مستخدم")
@@ -14643,7 +14904,10 @@ class App(tk.Tk):
                 "إلا من الأدمن نفسه")
             return
         # ★ إضافة (إصدار 8 — الميزة 3): تسجيل النافذة في التتبع المركزي
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("edit_permissions")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("تعديل الصلاحيات")
         win.configure(bg=BG); win.resizable(False, False)
         card = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
@@ -14718,7 +14982,10 @@ class App(tk.Tk):
                 "إلا من الأدمن نفسه")
             return
         # ★ إضافة (إصدار 8 — الميزة 3): تسجيل النافذة في التتبع المركزي
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("reset_password")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("إعادة تعيين كلمة المرور")
         win.configure(bg=BG); win.resizable(False, False)
         card = tk.Frame(win, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
@@ -16605,7 +16872,10 @@ class App(tk.Tk):
             sub = f"عدد الأيام: {len(rows)}"
             data = {"f": f, "t": t, "rows": rows}
         # ★ إضافة (إصدار 8 — الميزة 3): تسجيل نافذة المعاينة في التتبع المركزي
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window(f"print_preview:{kind}:{arg}")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("👁️ معاينة قبل الطباعة")
         # ★ تعديل مصرح به (الإصدار 15 — الجزء الأول — القاعدة الذهبية): شريط
         # أزرار الطباعة السفلي يُحزم أولاً side="bottom" قبل الترويسة والمحتوى
@@ -16867,7 +17137,10 @@ class App(tk.Tk):
         التقرير التاريخ والوقت واسم من يطبع — وثلاثة مسارات من نفس المعاينة:
         طباعة حرارية 80mm / طباعة A4 عبر PDF / تصدير Excel (نفس export_xlsx)
         — التقرير للعرض والطباعة فقط ولا يتيح أي تعديل"""
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("sellers_report")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("👁️ معاينة قبل الطباعة — تقرير البائعين")
         win.configure(bg=BG)
         # القاعدة الذهبية: شريط الأزرار السفلي يُحزم أولاً side="bottom"
@@ -17385,7 +17658,10 @@ class App(tk.Tk):
                         "لا توجد ملاحظات منشورة لهذا الإصدار بعد.\n"
                         "يمكنك سؤال المالك عن تفاصيل التحديث.", parent=parent)
                     return
-                win = self.register_window(tk.Toplevel(self))
+                win, _is_new = self._popup_window("changelog")
+                if not _is_new:
+                    return win
+                win = self.register_window(win)
                 win.title(f"📄 ما الجديد؟ — الإصدار {ver}")
                 win.configure(bg=CARD)
                 # القاعدة الذهبية: زر الإغلاق أسفل أولاً ثم المحتوى يتمدد
@@ -18178,7 +18454,10 @@ class App(tk.Tk):
                     return
             except Exception:
                 pass
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("admin_center")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         try:
             win.transient(self)
         except Exception:
@@ -18650,7 +18929,10 @@ class App(tk.Tk):
         """★ إضافة (حزمة السلاسة): نافذة صغيرة «دليل الاختصارات» تعرض
         الاختصارات كلها مع تنبيه قاعدة الصلاحيات — متاحة دائمًا بلا صلاحية"""
         try:
-            win = self.register_window(tk.Toplevel(self))
+            win, _is_new = self._popup_window("shortcuts_guide")
+            if not _is_new:
+                return win
+            win = self.register_window(win)
             try:
                 win.transient(self)
             except Exception:
@@ -18726,7 +19008,10 @@ class App(tk.Tk):
                 "مركز المتابعة والرقابة يتطلب صلاحية «لوحة المتابعة الحية»\n"
                 "أو صلاحية «تقرير الأنشطة غير الطبيعية» — راجع الأدمن")
             return
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("monitor_center")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("مركز المتابعة والرقابة")
         win.configure(bg=BG)
         st = {"tab": "live", "job": None}
@@ -19167,7 +19452,10 @@ class App(tk.Tk):
                 "الخمس:\nالملخص الصباحي / التقرير الأسبوعي / الانضباط / "
                 "فحص صحة النظام / مراقبة النسخ الاحتياطي — راجع الأدمن")
             return
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("admin_reports")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("التقارير الإدارية")
         win.configure(bg=BG)
         # نمط خاص بهذه النافذة وحدها لتبويبات الدفتر — لا يُمس أي نمط قائم
@@ -21079,7 +21367,10 @@ class App(tk.Tk):
             messagebox.showwarning("بيع بالدين",
                 "إجمالي الفاتورة يجب أن يكون أكبر من صفر")
             return
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window(f"credit_sale:{mode}")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("بيع بالدين")
         win.configure(bg=BG)
         win.resizable(False, False)
@@ -21435,7 +21726,10 @@ class App(tk.Tk):
             _ensure_stage4_tables()
         except Exception:
             pass
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("customers")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("العملاء والديون والضمانات")
         win.configure(bg=BG)
         try:
@@ -21556,7 +21850,10 @@ class App(tk.Tk):
         """★ إضافة (المرحلة الرابعة): إضافة عميل جديد — الاسم إلزامي
         والهاتف والملاحظات اختيارية"""
         try:
-            win = self.register_window(tk.Toplevel(self))
+            win, _is_new = self._popup_window("cw_add_customer")
+            if not _is_new:
+                return win
+            win = self.register_window(win)
             win.title("إضافة عميل")
             win.configure(bg=BG)
             win.resizable(False, False)
@@ -21626,7 +21923,10 @@ class App(tk.Tk):
             if c is None:
                 messagebox.showwarning("تنبيه", "اختر عميلاً من الجدول أولاً")
                 return
-            win = self.register_window(tk.Toplevel(self))
+            win, _is_new = self._popup_window("cw_edit_customer")
+            if not _is_new:
+                return win
+            win = self.register_window(win)
             win.title("تعديل بيانات عميل")
             win.configure(bg=BG)
             win.resizable(False, False)
@@ -21729,7 +22029,10 @@ class App(tk.Tk):
             if c is None:
                 messagebox.showwarning("تنبيه", "اختر عميلاً من الجدول أولاً")
                 return
-            win = self.register_window(tk.Toplevel(self))
+            win, _is_new = self._popup_window("cw_customer_card")
+            if not _is_new:
+                return win
+            win = self.register_window(win)
             win.title(f"بطاقة عميل: {c['name']}")
             win.configure(bg=BG)
             debt_all4 = customer_debt_total(c["id"])
@@ -22017,7 +22320,10 @@ class App(tk.Tk):
             if rem4 <= 1e-9:
                 messagebox.showwarning("تنبيه", "هذا الدين مسدد بالكامل")
                 return
-            win = self.register_window(tk.Toplevel(self))
+            win, _is_new = self._popup_window("cw_collect")
+            if not _is_new:
+                return win
+            win = self.register_window(win)
             win.title("تسجيل تحصيل")
             win.configure(bg=BG)
             win.resizable(False, False)
@@ -22171,7 +22477,10 @@ class App(tk.Tk):
             _cur_c = (str(d["collection_date"]).strip()
                       if "collection_date" in d.keys()
                       and str(d["collection_date"] or "").strip() else "")
-            win = self.register_window(tk.Toplevel(self))
+            win, _is_new = self._popup_window("cw_edit_collection_date")
+            if not _is_new:
+                return win
+            win = self.register_window(win)
             win.title("تعديل موعد التحصيل")
             win.configure(bg=BG)
             win.resizable(False, False)
@@ -22469,7 +22778,10 @@ class App(tk.Tk):
                 messagebox.showwarning("لا تملك صلاحية",
                     "إضافة الضمانات تتطلب صلاحية «تذكير انتهاء الضمانات»")
                 return
-            win = self.register_window(tk.Toplevel(self))
+            win, _is_new = self._popup_window("cw_add_warranty")
+            if not _is_new:
+                return win
+            win = self.register_window(win)
             win.title("إضافة ضمان")
             win.configure(bg=BG)
             win.resizable(False, False)
@@ -22738,7 +23050,10 @@ class App(tk.Tk):
             messagebox.showwarning("لا تملك صلاحية",
                 "كشف الصندوق يتطلب صلاحية «كشف الصندوق اليومي» — راجع الأدمن")
             return
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("cash_report")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("كشف الصندوق اليومي")
         win.configure(bg=BG)
         win.resizable(False, False)
@@ -22863,7 +23178,10 @@ class App(tk.Tk):
             messagebox.showwarning("لا تملك صلاحية",
                 "المصروفات تتطلب صلاحية «تسجيل المصروفات وعرضها» — راجع الأدمن")
             return
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("expenses")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("المصروفات الموثقة")
         win.configure(bg=BG)
         bar6 = tk.Frame(win, bg=BG)
@@ -22934,7 +23252,10 @@ class App(tk.Tk):
             _ensure_cash_tables()
         except Exception:
             pass
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("expense_add")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("تسجيل مصروف")
         win.configure(bg=BG)
         win.resizable(False, False)
@@ -23031,7 +23352,10 @@ class App(tk.Tk):
             _ensure_cash_tables()
         except Exception:
             pass
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("expense_record")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("تسجيل مصروف")
         win.configure(bg=BG)
         win.resizable(False, False)
@@ -23149,7 +23473,10 @@ class App(tk.Tk):
                 "عروض الأسعار تتطلب صلاحية «عروض الأسعار» — راجع الأدمن")
             return
         _is_adm9 = (self.role == ADMIN_ROLE)
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("quotations")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("عروض الأسعار")
         win.configure(bg=BG)
         # ---------- شريط الفلاتر ----------
@@ -23467,7 +23794,11 @@ class App(tk.Tk):
         except Exception:
             pass
         _edit9 = (existing is not None)
-        win = self.register_window(tk.Toplevel(self))
+        _qkey = f"quote_editor:{existing['quote_no'] if existing else 'new'}"
+        win, _is_new = self._popup_window(_qkey)
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title(("تعديل عرض السعر رقم " + str(existing["quote_no"] or "—"))
                   if _edit9 else "عرض سعر جديد")
         win.configure(bg=BG)
@@ -23669,7 +24000,10 @@ class App(tk.Tk):
             if not (0 <= _i9 < len(items9)):
                 return
             _it9 = items9[_i9]
-            d9 = self.register_window(tk.Toplevel(win))
+            d9, _is_new9 = self._popup_window(f"{_qkey}:item:{_i9}", parent=win)
+            if not _is_new9:
+                return
+            d9 = self.register_window(d9)
             d9.title("تعديل صنف العرض")
             d9.configure(bg=BG)
             d9.resizable(False, False)
@@ -23908,7 +24242,10 @@ class App(tk.Tk):
             messagebox.showwarning("لا تملك صلاحية",
                 "متابعة الديون تتطلب صلاحية «متابعة الديون وأعمارها» — راجع الأدمن")
             return
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window("debt_aging")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("متابعة الديون")
         win.configure(bg=BG)
         _today6 = get_business_day()
@@ -24191,7 +24528,10 @@ class App(tk.Tk):
                 cnm6 = rr6["cname"] or "عميل"
         except Exception:
             pass
-        win = self.register_window(tk.Toplevel(self))
+        win, _is_new = self._popup_window(f"aging_promise:{debt_id}")
+        if not _is_new:
+            return win
+        win = self.register_window(win)
         win.title("تحديد موعد التحصيل")
         win.configure(bg=BG)
         win.resizable(False, False)
